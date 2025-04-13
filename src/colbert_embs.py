@@ -104,6 +104,7 @@ class ColBERTBaseE2E(BaseE2E):
                 self.config.rh_list = [self.config.rh_num]
             else:
                 self.config.rh_list = list(range(self.config.num_rh_augment))
+                assert False, self.config
                 
         corpus_tsv_filename, _ = self.dataloader.get_tsv()
         if self.config.augment:
@@ -189,7 +190,8 @@ class ColBERTBaseline(ColBERTBaseE2E):
         
         self.embedder.embed_full_dataset(self.dataloader,mode="mem")
         qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
-        
+        # KN TODO : add an assert here perhaps
+        # KN TODO 2 : we might need batching for larger query sizes
         
         result_ids = self.search(qembs, qmasks, k=self.config.k)
         
@@ -220,7 +222,7 @@ class ColBERTBaselineWithRerank(ColBERTBaseline):
         
         self.embedder.embed_full_dataset(self.dataloader,mode="mem")
         qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
-        
+        # KN TODO : add an assert here perhaps
         
         result_ids = self.search(qembs, k=self.config.colbert_topk)
 
@@ -313,8 +315,7 @@ class ColBERTAugmented(ColBERTBaseE2E):
         ## TODO:tensorize -- just initialise the tensor to -1 then do torch.where ==-1 tensor[:,:1]
         result = []
         for key in range(len(qembs)):
-            current_set = lis
-            t(merged_ids[key])
+            current_set = list(merged_ids[key])
             current_set.extend([current_set[0]] * (max_len - len(current_set)))
             result.append(current_set)
         # convert merged_ids to the required format
@@ -327,7 +328,8 @@ class ColBERTAugmented(ColBERTBaseE2E):
         self.embedder.embed_full_dataset(self.dataloader,mode="mem")
         
         qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
-        
+        # KN TODO : add an assert here perhaps
+        # KN TODO 2 : we might need batching for larger query sizes
         optvec = -torch.ones_like(qmasks,dtype=qembs.dtype) * 2 # Just to be safe
         opt_scores = torch.zeros((qmasks.size(0),self.config.k),dtype=torch.float32)
         opt_inds = -torch.ones((qmasks.size(0),self.config.k),dtype=torch.int64)
@@ -337,6 +339,7 @@ class ColBERTAugmented(ColBERTBaseE2E):
                 logger.info(f"Running iteration {i+1}/{self.config.k}")
                 qembs[:,:,-1] = optvec
                 inds = self.search(qembs,qmasks,  k=self.config.colbert_topk)
+                # KN TODO: save stats?
                 # save(inds,"debug_inds.pkl")
                 logger.info(f"Search Done - iter {i+1}/{self.config.k}")
                 cembs, cmasks = self.embedder.get_corpus(inds)
@@ -390,6 +393,8 @@ class ColBERTaugwiththreshold(ColBERTAugmented):
                 merged_ids[key].update(set(ids))
             logger.debug(f"Query {key}: Unique elements = {len(merged_ids[key].distinct_elements())}, Total elements = {sum(merged_ids[key].multiplicities())}, Maximum count = {max(merged_ids[key].multiplicities())}")
         if self.threshold==1:
+            # ins
+            # KN TODO: save stats differently?
             save(merged_ids, f"{self.variety}_{self.config.data.dataset_name}_b{self.config.colbert_topk}.pkl") 
         for key in range(len(qembs)):
             merged_ids[key] = [elem for elem, count in merged_ids[key].items() if count >= self.threshold]

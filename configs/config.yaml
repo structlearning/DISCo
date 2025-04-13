@@ -46,14 +46,19 @@ retriever:
   dtype: 'float32'
   
 embedder: 
-  type: 'base'
   recompute_emb: False
   pretrained: True
   model_name: 'bert-base-uncased'
   save_embeddings: True
-  emb_dim: 10
   batch_size: 1024
+  #### FOR COLBERT EMBEDDER ONLY LOOK BELOW
   mode: "mem" # disk or mem
+  type: 'BERT'
+  mv_type: "colbertv2-plaid" # "colbertv2-base", "colbertv2-plaid", "xtr-base"
+  emb_dim: 128
+  query_batch_size: null
+
+
 
 muvera:
   type: 'base'

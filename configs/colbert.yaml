@@ -17,7 +17,7 @@ generate_new_rh: True
 parallelization: "thread" # "proc" or "thread" or "none"
 
 save_intermediate: False # save all index/scores at intermediate steps
-save_full_embs: True # save full embeddings for all queries/documents
+save_full_embs: False # save full (uncompressed) embeddings for all queries/documents
 
 index: True
 overwrite_index: False # False, True, 'reuse', 'resume', "force_silent_overwrite"

@@ -34,7 +34,8 @@ class RunSettings:
 
     @property
     def gpus_(self):
-        value = self.gpus
+        
+        value = os.getenv("CUDA_VISIBLE_DEVICES", self.gpus)
 
         if isinstance(value, int):
             value = list(range(value))
@@ -45,9 +46,9 @@ class RunSettings:
         value = list(map(int, value))
         value = sorted(list(set(value)))
 
-        assert all(
-            device_idx in range(0, self.total_visible_gpus) for device_idx in value
-        ), value
+        # assert all(
+        #     device_idx in range(0, self.total_visible_gpus) for device_idx in value
+        # ), value
 
         return value
 
