@@ -1,0 +1,9 @@
+data
+pickles
+logs
+*/__pycache__
+experiments
+pickles
+commands_IR.txt
+testing
+ColBERT/colbertv2.0/pytorch_model.bin

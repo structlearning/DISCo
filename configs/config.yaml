@@ -1,0 +1,78 @@
+
+method: topk # exact, v0, muvera, topk, 
+k: 15 # budget
+num_rh: 8 # number of random hyperplanes to augement the embeddings with
+seed: 0
+
+query_batch_size: 512
+corpus_batch_size: 5120
+
+dtype: 'float32' # 'float16', 'bfloat16'
+
+data:
+  loader_type: "beir"
+  dataset_name: "scifact"
+
+baseline:
+  bucket_size: 1000 # -1 if you want everything
+  seed: 17
+  use_aug: False
+
+device: 'cuda:0'
+
+posting:
+  variety: "mp"
+  aggregation: "threshold" # intersection, union, or threshold(given by value)
+  update_list: True
+  update_retr_list: True
+  numpy: False # for thresholding based stats
+  threshold_values: [0.1,0.3,0.5,0.7,0.9] # threshold values for thresholding based stats
+  device: 'cuda:0'
+  lsh:
+    id: 0
+    type: 'base'
+    input_dim: -1 #  2*(emb_dim+1)*num_rh, will be computed on the fly
+    hash_dim: 12
+    create_tables: False
+    seed: 22
+    format: 'int' # 'int', 'vec'
+
+retriever:
+  type: "bf" # brute force for now
+  muvera_bucket_size: 100 # 1 lol you should change this ofc
+  mode: "disk" # disk or mem
+  corpus_batch_size: 10240
+  num_batches: -1 # if set, only use corpus batches upto num_batches
+  dtype: 'float32'
+  
+embedder: 
+  type: 'base'
+  recompute_emb: False
+  pretrained: True
+  model_name: 'bert-base-uncased'
+  save_embeddings: True
+  emb_dim: 10
+  batch_size: 1024
+  mode: "mem" # disk or mem
+
+muvera:
+  type: 'base'
+  in_emb_dim: -1 # dim of the input emebedding, will be computed live
+  compress: True
+  compress_dim: 20 # dim of compressed embedding, MUVERA embedding is 2^k times this
+  compression_mode: 'random_matrix'
+  seed: 11
+  batched: True
+  batch_size: 512 #query batch size
+  fill_empty_clusters: True
+  corpus_batch_size: 5120
+
+  lsh:
+    id: 0 
+    type: 'base'
+    input_dim: -1 # = 2*(emb_dim+1)*num_rh, will be computed on the fly
+    hash_dim: 8
+    create_tables: False
+    seed: 22
+    format: 'int' # 'int', 'vec'
+
