@@ -8,6 +8,7 @@ from .utils import set_seed,set_seed_from_checkpoint, load, save
 from tqdm import tqdm
 import random
 from numpy.random import default_rng
+import submodlib
 
 from .dataloader import get_dataloader
 from .embedder import ColBERTEmbedder
@@ -20,6 +21,8 @@ def get_method(config):
     name = config.method
     if name == "v0":
         return GreedyBaseline_v0(config)
+    elif name=="sml":
+        return GreedyBaseline_submodlib(config)
     else:
         raise ValueError(f"Unknown method: {name}")
 
@@ -51,7 +54,7 @@ class GreedyBaseline_v0(BaseE2E):
     def __init__(self,config):
         super().__init__(config)
         self.embedder = ColBERTEmbedder(config.embedder)
-        self.variety = f"greedy_base_{config.baseline.bucket_size}_{self.config.embedder.emb_dim}"
+        self.variety = f"greedy_base_{config.baseline.bucket_size}_{self.config.embedder.emb_dim}_k{config.k}"
         self.k = config.k
 
     def get_single_exact(self,qvec):
@@ -304,7 +307,120 @@ class GreedyBaseline_v0(BaseE2E):
         return opts
 
 
+class GreedyBaseline_submodlib(BaseE2E):
+    ## greedy routine with submodlib , exact
+    def __init__(self,config):
+        super().__init__(config)
+        self.embedder = ColBERTEmbedder(config.embedder)
+        # self.partial = None
+        
+        if config.submodlib.optimizer == "lazy":
+            self.optimizer = "LazyGreedy"
+        elif config.submodlib.optimizer == 'ltl':
+            self.optimizer = "LazierThanLazyGreedy"
+        elif config.submodlib.optimizer == 'naive':
+            logger.warning("Naive optimizer is not recommended, proceeding with caution")
+            self.optimizer = "NaiveGreedy"
+        else : 
+            raise ValueError(f"This optimizer is not allowed: {config.submodlib.optimizer}")
+        self.variety = f"greedy_submodlib_{self.optimizer}_k{config.k}"
+        self.k = config.k
+    
+    def get_single(self,qvec): # TODO can be multiprocessed?
+        corp_size = len(self.embedder.cembs) ## embedder must be in mem mode
+        corpus,masks = self.embedder.get_corpus(torch.arange(corp_size))
+        logger.info(f"corpus shape : {corpus.shape}")
+        logger.info(f"masks shape : {masks.shape}")
+        logger.info(f"qvec shape : {qvec.shape}")
+        
+        qvec = qvec.to(corpus.device)
+        # partial_chamfer = partial_chamfer_sim(qvec, corpus,masks)
+        
+        sb = (corpus)@(qvec.T)
+        
+        logger.info(f"sb {sb}; {sb.shape}")
+        
+        sb[masks==0] = -10
+        # logger.info(f"sb masked {sb}")
+        partial = sb.amax(dim=1).T
+        # logger.info(f"partial {partial}")
+        
+        opt_for_each_query = submodlib.functions.facilityLocation.FacilityLocationFunction(n=corp_size,mode="dense",separate_rep=True,n_rep=len(qvec),sijs=np.array(partial.cpu().tolist()))
+    
+        # opt_for_each_query = submodlib.functions.facilityLocation.FacilityLocationFunction(n=self.config.baseline.bucket_size,mode="dense",separate_rep=True,n_rep=len(qvec),sijs=partial_chamfer)
+        result = opt_for_each_query.maximize(budget=self.k,stopIfZeroGain=True,optimizer=self.optimizer)
+        
+
+        return result
+        
+        
+    def run(self):
+        result_path = f"./pickles/results/{self.variety}_{self.dataloader.dataset_name}_{self.config.retriever.type}{self.suffix}_k{self.k}.pkl"
+        if os.path.exists(result_path) and False:
+            logger.info("Loading existing results")
+            return load(result_path)
+        
+        self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode) 
+        self.batched = True
+        self.query_num = len(self.embedder.qembs)
+        # fetch from checkpoints
+        chkpt = 0
+        set_seed(self.config.baseline.seed)
+        opts = []
+        # chkpath = f"./pickles/results/{self.variety}_{self.dataloader.dataset_name}_{self.config.retriever.type}_chkpt.pkl"
+        # chklogpath = f"./pickles/results/{self.variety}_{self.dataloader.dataset_name}_{self.config.retriever.type}_log.pkl"
+        # if os.path.exists(chklogpath):
+        #     chklog = load(chklogpath)
+        #     opts = load(chkpath,"rb")
+        #     chkpt = chklog["completed_qid"] + 1 
+        #     set_seed_from_checkpoint(**chklog["seeds"])
+            
+        
+        logger.info(f"Starting from query_id: {chkpt}")
+        start = time.time()
+        lap = start
+        ## speed this up with multiprocessing bruh
+        for query_id in tqdm(range(chkpt,self.query_num)):
+            query = self.embedder.qembs[query_id][self.embedder.qmasks[query_id].bool()]
+            result = self.get_single(query)
+            opts.append([i[0] for i in result])
+            
+        end = time.time()
+        logger.info(f"Total time taken for running submodlib: {end-start} seconds")
+        logger.info(f"Now recomputing scores")
+        start = time.time()
+        max_len = max([len(i) for i in opts])
+        opts_tensor = torch.tensor([opt_i + [opt_i[-1]]*(max_len-len(opt_i)) for opt_i in opts],dtype=torch.int64)
+        logger.info(f"opts tensor: {opts_tensor}; max_len {max_len}")
+        cembs_to_rescore, cmasks_to_rescore = self.embedder.get_corpus(opts_tensor)
+        # q,k,corpus_set,emb; q,k,corpus_set;
+        cembs_to_rescore, cmasks_to_rescore = cembs_to_rescore.to(self.device), cmasks_to_rescore.to(self.device)
+        qemb_masked = self.embedder.qembs*(self.embedder.qmasks.unsqueeze(-1).to(self.embedder.qembs.device,self.embedder.qembs.dtype))
+        qemb_masked = qemb_masked.to(self.device)
+        sim_matrix = torch.where(
+                        cmasks_to_rescore.bool().unsqueeze(-1),
+                        torch.einsum("qkse,qce->qksc",cembs_to_rescore,qemb_masked),
+                        -10   
+                    )
+        # logger.info(f"Sim matrix: {sim_matrix.shape}")
+        partials = sim_matrix.amax(dim=2)
+        # logger.info(f"Partial: {partials.shape}")
+        # logger.info(f"Partial: {partials}")
+        cum_partials = torch.cummax(partials,dim=1).values
+        logger.info(f"Cum_partials: {cum_partials.shape}")
+        logger.info(f"Cum_partials: {cum_partials}")
+        scores = cum_partials.sum(dim=2)
+        logger.info(f"Scores: {scores.shape}")
+        logger.info(f"Scores: {scores}")
+        opts = (opts_tensor.cpu(),scores.cpu())
+        end = time.time()
+        logger.info(f"Total time taken for rescoring: {end-start} seconds")
+        save(opts,result_path)
+        return opts
+
 if __name__=="__main__":
+    import warnings
+    warnings.filterwarnings("ignore", category=FutureWarning)
 
     os.makedirs("logs/end_to_end",exist_ok=True)
     
