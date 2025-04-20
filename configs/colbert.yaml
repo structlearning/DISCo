@@ -1,9 +1,9 @@
-k: 15
+k: 5
 colbert_topk: 100
-method: "baseline" # baseline, rerank, augmented
+method: "internal" # baseline, rerank, augmented, internal
 
 data:
-  dataset_name: "hotpotqa"  #scifact, hotpotqa
+  dataset_name: "nfcorpus"  #scifact, hotpotqa
   loader_type: "beir"
 
 augment: False 
@@ -11,7 +11,7 @@ dbl_norm: True  # [:,:,-1]=0 -> normalization -> [:,:,-1] = -1
 num_rh_augment: 8
 rh_num : -1
 threshold: 1
-generate_new_rh: True
+generate_new_rh: False
 # RH_file: "experimemts/temp"
 
 parallelization: "thread" # "proc" or "thread" or "none"
@@ -19,13 +19,19 @@ parallelization: "thread" # "proc" or "thread" or "none"
 save_intermediate: False # save all index/scores at intermediate steps
 save_full_embs: False # save full (uncompressed) embeddings for all queries/documents
 
-index: True
+index: False
 overwrite_index: False # False, True, 'reuse', 'resume', "force_silent_overwrite"
 
 
 colbert:
   nbits: 2 
   save_full_embs: False #TODO: remove redundancy 
+  normalize_q : True # Normalise augmented queries before sending over to colbert
+
+# only valid for colbert_internal
+colbert_internal:
+  rerank_internal: True ## rerank on the colbert score
+  rerank_external: True ## rerank by us on the external score
 
 
 

@@ -170,7 +170,7 @@ class ColBERT(BaseColBERT):
                 self.RH = torch.load(filename)
                 
                 
-        reflect = torch.sgn(embs @ self.RH).unsqueeze(-1)*embs
+        reflect = ((embs @ self.RH) >0).to(embs.dtype).unsqueeze(-1)*embs
         embs = torch.cat([embs, reflect], dim=-1)
         return embs
 
@@ -198,7 +198,7 @@ class ColBERT(BaseColBERT):
                 self.RH = torch.load(filename)
                 
                 
-        reflect = torch.sgn(embs @ self.RH).unsqueeze(-1)*embs
+        reflect = ((embs @ self.RH) >0).to(embs.dtype).unsqueeze(-1)*embs
         embs = torch.cat([embs, reflect], dim=-1)
         return embs
     
@@ -244,7 +244,7 @@ class ColBERT_rhaug(ColBERT):
     def __init__(self, name='bert-base-uncased', colbert_config=None,hyperplane_for_aug:torch.Tensor=None):
         super().__init__(name, colbert_config)
         #TODO: INDRA
-        raise ValueError("ColBERT_rhaug is should not be used as of now.")
+        raise ValueError("ColBERT_rhaug should not be used as of now.")
         self.hyperplane_for_aug = hyperplane_for_aug
         
     def query(self, input_ids, attention_mask):
@@ -346,6 +346,57 @@ def colbert_score_packed(Q, D_packed, D_lengths, config=ColBERTConfig()):
 
     scores = D_packed @ Q.to(dtype=D_packed.dtype).T
 
+    if use_gpu or config.interaction == "flipr":
+        scores_padded, scores_mask = StridedTensor(scores, D_lengths, use_gpu=use_gpu).as_padded_tensor()
+
+        return colbert_score_reduce(scores_padded, scores_mask, config)
+    else:
+        return ColBERT.segmented_maxsim(scores, D_lengths)
+
+    # TODO: Wherever this is called, pass `config=`
+def colbert_score_modified(Q, D_padded, D_mask, opt_vec, config=ColBERTConfig()):
+    """
+        Supply sizes Q = (1 | num_docs, *, dim) and D = (num_docs, *, dim).
+        If Q.size(0) is 1, the matrix will be compared with all passages.
+        Otherwise, each query matrix will be compared against the *aligned* passage.
+
+        EVENTUALLY: Consider masking with -inf for the maxsim (or enforcing a ReLU).
+    """
+
+    use_gpu = config.total_visible_gpus > 0
+    if use_gpu:
+        Q, D_padded, D_mask = Q.cuda(), D_padded.cuda(), D_mask.cuda()
+
+    assert Q.dim() == 3, Q.size()
+    assert D_padded.dim() == 3, D_padded.size()
+    assert Q.size(0) in [1, D_padded.size(0)]
+
+    scores = D_padded @ Q.to(dtype=D_padded.dtype).permute(0, 2, 1)
+
+    scores = torch.maximum(scores, opt_vec.to(scores.device))
+
+    return colbert_score_reduce(scores, D_mask, config)
+
+
+def colbert_score_packed_modified(Q, D_packed, D_lengths, opt_vec,  config=ColBERTConfig()):
+    """
+        Works with a single query only.
+    """
+
+    use_gpu = config.total_visible_gpus > 0
+
+    if use_gpu:
+        Q, D_packed, D_lengths = Q.cuda(), D_packed.cuda(), D_lengths.cuda()
+
+    Q = Q.squeeze(0)
+
+    assert Q.dim() == 2, Q.size()
+    assert D_packed.dim() == 2, D_packed.size()
+
+    scores = D_packed @ Q.to(dtype=D_packed.dtype).T
+    # print(type(scores),scores.shape,opt_vec.shape)
+    scores = torch.maximum(scores, opt_vec.to(scores.device))
+    # print(type(scores),scores.shape)
     if use_gpu or config.interaction == "flipr":
         scores_padded, scores_mask = StridedTensor(scores, D_lengths, use_gpu=use_gpu).as_padded_tensor()
 

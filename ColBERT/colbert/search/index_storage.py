@@ -9,7 +9,7 @@ from colbert.search.strided_tensor import StridedTensor
 from colbert.search.candidate_generation import CandidateGeneration
 
 from .index_loader import IndexLoader
-from colbert.modeling.colbert import colbert_score, colbert_score_packed, colbert_score_reduce
+from colbert.modeling.colbert import colbert_score, colbert_score_packed, colbert_score_reduce, colbert_score_modified, colbert_score_packed_modified
 
 from math import ceil
 
@@ -192,3 +192,44 @@ class IndexScorer(IndexLoader, CandidateGeneration):
         D_padded, D_lengths = D_strided.as_padded_tensor()
 
         return colbert_score(Q, D_padded, D_lengths, config), pids
+    
+    
+    def score_pids_modified(self, config, Q, pids, centroid_scores,opt_vec):
+        """
+            Always supply a flat list or tensor for `pids`.
+
+            Supply sizes Q = (1 | num_docs, *, dim) and D = (num_docs, *, dim).
+            If Q.size(0) is 1, the matrix will be compared with all passages.
+            Otherwise, each query matrix will be compared against the *aligned* passage.
+        """
+
+        # TODO: Remove batching?
+        batch_size = 2 ** 20
+        assert centroid_scores is None
+        # Rank final list of docs using full approximate embeddings (including residuals)
+        if self.use_gpu:
+            D_packed, D_mask = self.lookup_pids(pids)
+        else:
+            D_packed = IndexScorer.decompress_residuals(
+                    pids,
+                    self.doclens,
+                    self.offsets,
+                    self.codec.bucket_weights,
+                    self.codec.reversed_bit_map,
+                    self.codec.decompression_lookup_table,
+                    self.embeddings.residuals,
+                    self.embeddings.codes,
+                    self.codec.centroids,
+                    self.codec.dim,
+                    self.codec.nbits
+                )
+            D_packed = torch.nn.functional.normalize(D_packed.to(torch.float32), p=2, dim=-1)
+            D_mask = self.doclens[pids.long()]
+
+        if Q.size(0) == 1:
+            return colbert_score_packed_modified(Q, D_packed, D_mask, opt_vec, config), pids
+
+        D_strided = StridedTensor(D_packed, D_mask, use_gpu=self.use_gpu)
+        D_padded, D_lengths = D_strided.as_padded_tensor()
+
+        return colbert_score_modified(Q, D_padded, D_lengths, opt_vec, config), pids

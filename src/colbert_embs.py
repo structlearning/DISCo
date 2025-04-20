@@ -13,6 +13,8 @@ from tqdm import tqdm
 from colbert.infra import Run, RunConfig, ColBERTConfig
 from colbert import Indexer, Searcher
 
+# from torch_scatter import scatter
+
 from multiprocessing import Pool
 
 from multiset import Multiset as multiset
@@ -166,7 +168,7 @@ class ColBERTBaseline(ColBERTBaseE2E):
 
     def search(self,qembs,qmasks,k):
         queries = DummyQueryForColbert(len(qembs))
-        ranking = self.searcher.search_all_modified(queries,Q=qembs,M=qmasks ,k=k).todict()
+        ranking = self.searcher.search_all_modified(queries,Q=qembs,M=qmasks ,k=k, normalize_q = self.config.colbert.normalize_q).todict()
         
         res = []
         for i in range(len(qembs)):
@@ -188,7 +190,7 @@ class ColBERTBaseline(ColBERTBaseE2E):
         self._init_searcher()
         result_file_path = f"./pickles/results/{self.config.embedder.type}/{self.variety}_{self.config.data.dataset_name}_k{self.config.k}{self.suffix}.pkl"
         
-        self.embedder.embed_full_dataset(self.dataloader,mode="mem")
+        self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode)
         qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
         # KN TODO : add an assert here perhaps
         # KN TODO 2 : we might need batching for larger query sizes
@@ -220,7 +222,7 @@ class ColBERTBaselineWithRerank(ColBERTBaseline):
         self._init_searcher()
         result_file_path = f"./pickles/results/{self.config.embedder.type}/{self.variety}_{self.config.data.dataset_name}_k{self.config.k}{self.suffix}.pkl"
         
-        self.embedder.embed_full_dataset(self.dataloader,mode="mem")
+        self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode)
         qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
         # KN TODO : add an assert here perhaps
         
@@ -252,7 +254,7 @@ class ColBERTBaselineWithRerank(ColBERTBaseline):
 def search_worker_for_mp(i, config, queries, qembs, qmasks, k):
     with torch.inference_mode():
         # with Run().context(RunConfig(nranks=1, experiment=f"colbert_{config.data.dataset_name}")):
-        with Run().context(RunConfig(nranks=1, experiment=f"{config.data.dataset_name}/{config.embedder.type}/{config.embedder.mv_type + ('_dblnorm' if config.dbl_norm else '')}")):
+        with Run().context(RunConfig(nranks=1, experiment=f"{config.data.dataset_name}/{config.embedder.type}/{config.embedder.mv_type + ('_dblnorm' if config.dbl_norm else '_norm')}")):
             colbert_config=ColBERTConfig(
                 nbits=config.colbert.nbits,
                 root="./colbert_beir_expts/",
@@ -267,11 +269,11 @@ def search_worker_for_mp(i, config, queries, qembs, qmasks, k):
                 checkpoint="/mnt/elk/data/kartikn/colbert/colbertv2.0",
                 index=f"nbits={config.colbert.nbits}.aug{config.num_rh_augment}.{i}",
                 config=colbert_config,
-            ).search_all_modified(queries, qembs, qmasks, k).todict()
+            ).search_all_modified(queries, qembs, qmasks, k, normalize_q = config.colbert.normalize_q).todict()
             
 def search_worker_for_th(searcher, queries, qembs, qmasks, k):
     with torch.inference_mode():
-        return searcher.search_all_modified(queries, qembs, qmasks, k).todict()
+        return searcher.search_all_modified(queries, qembs, qmasks, k, normalize_q = config.colbert.normalize_q).todict()
 
 ### Augmented implementation
 class ColBERTAugmented(ColBERTBaseE2E):
@@ -298,7 +300,7 @@ class ColBERTAugmented(ColBERTBaseE2E):
                 ]
                 all_ids = [future.result() for future in concurrent.futures.as_completed(futures)]
         elif self.config.parallelization == "none":
-            all_ids = [self.searcher[i].search_all_modified(queries, qembs,qmasks,  k).todict() for i in range(self.config.num_rh_augment)]
+            all_ids = [self.searcher[i].search_all_modified(queries, qembs,qmasks,  k, normalize_q = self.config.colbert.normalize_q).todict() for i in range(self.config.num_rh_augment)]
         else:
             raise ValueError(f"Unknown parallelization method: {self.config.parallelization}")
         
@@ -325,7 +327,7 @@ class ColBERTAugmented(ColBERTBaseE2E):
         self._init_searcher()
         result_file_path = f"./pickles/results/{self.config.embedder.type}/{self.variety}_{self.config.data.dataset_name}_k{self.config.k}_rerankperh{self.config.colbert_topk}{self.suffix}.pkl"
         
-        self.embedder.embed_full_dataset(self.dataloader,mode="mem")
+        self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode)
         
         qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
         # KN TODO : add an assert here perhaps
@@ -380,7 +382,7 @@ class ColBERTaugwiththreshold(ColBERTAugmented):
                 ]
                 all_ids = [future.result() for future in concurrent.futures.as_completed(futures)]
         elif self.config.parallelization == "none":
-            all_ids = [self.searcher[i].search_all_modified(queries, qembs, qmasks, k).todict() for i in range(self.config.num_rh_augment)]
+            all_ids = [self.searcher[i].search_all_modified(queries, qembs, qmasks, k, normalize_q = self.config.colbert.normalize_q).todict() for i in range(self.config.num_rh_augment)]
         else:
             raise ValueError(f"Unknown parallelization method: {self.config.parallelization}")
         
@@ -413,7 +415,192 @@ class ColBERTaugwiththreshold(ColBERTAugmented):
             result.append(current_set)
         # convert merged_ids to the required format
         return torch.tensor(result)
+    
+class ColBERT_internal(ColBERTAugmented):
+    def __init__(self, config):
+        super().__init__(config)
+        self.variety = f"{self.mv_type}_int_n{self.config.colbert.nbits}_d{self.config.embedder.emb_dim}_rh{self.config.num_rh_augment}_int{config.colbert_internal.rerank_internal}_ext{config.colbert_internal.rerank_external}"
+        assert config.colbert_internal.rerank_external or config.colbert_internal.rerank_internal
         
+    def _init_base_searcher(self):
+        mv = self.mv_type.split("/")[0]+"/norm"
+        with Run().context(RunConfig(nranks=1, experiment=f"{self.config.data.dataset_name}/{self.config.embedder.type}/{mv}")):
+            colbert_config=ColBERTConfig(
+                nbits=self.config.colbert.nbits,
+                root="./colbert_beir_expts/",
+                augment=self.config.augment,
+                dim=self.config.embedder.emb_dim,
+            )
+            self.base_searcher = Searcher(
+                checkpoint="ColBERT/colbertv2.0",
+                # index=f"{self.mv_type}.{self.config.data.dataset_name}_nbits={self.config.colbert.nbits}.noaug",
+                index=f"nbits={self.config.colbert.nbits}.noaug",
+
+                config=colbert_config,
+            )
+    def run(self):
+        self._init_searcher() # Searchers over augmented indices
+        self._init_base_searcher() # Searcher over base index
+        result_file_path = f"./pickles/results/{self.config.embedder.type}/{self.variety}_{self.config.data.dataset_name}_k{self.config.k}_rerankperh{self.config.colbert_topk}{self.suffix}.pkl"
+        
+        self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode)
+        
+        qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
+        # KN TODO : add an assert here perhaps
+        # KN TODO 2 : we might need batching for larger query sizes
+        optvec = -torch.ones_like(qmasks,dtype=qembs.dtype) * 2 # Just to be safe
+        opt_scores = torch.zeros((qmasks.size(0),self.config.k),dtype=torch.float32)
+        opt_inds = -torch.ones((qmasks.size(0),self.config.k),dtype=torch.int64)
+        # you can add batching here
+        with torch.inference_mode():
+            for i in tqdm(range(self.config.k)):
+                logger.info(f"Running iteration {i+1}/{self.config.k}")
+                # qembs[:,:,-1] = optvec # THIS STEP IS NOT NEEDED FOR INTERNAL
+                k = self.config.colbert_topk if self.config.colbert_internal.rerank_external else 1
+                inds = self.search(qembs, k=k, opt_vec = optvec)
+                # KN TODO: save stats?
+                # save(inds,"debug_inds.pkl")
+                logger.info(f"Search Done - iter {i+1}/{self.config.k}")
+                cembs, cmasks = self.embedder.get_corpus(inds)
+                
+                max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
+                    qembs, qmasks, optvec.unsqueeze(-1), cembs, cmasks
+                )
+                real_indices = inds[torch.arange(inds.size(0)), max_sim_indices]
+                optvec = torch.maximum(optvec, max_sim_partial.to(optvec.device))
+                opt_scores[:,i].copy_(max_sim_scores)
+                opt_inds[:,i].copy_(real_indices)
+            
+        save((opt_inds,opt_scores), result_file_path)
+        return opt_inds, opt_scores
+    
+    def search(self, qembs, k, opt_vec):
+        
+        ## picked up from inside colbert
+        
+        all_scored_pids = [
+            list(
+                self._search_helper(
+                        qembs[query_idx:query_idx+1],
+                        opt_vec[query_idx:query_idx+1],
+                        k
+                    )
+                )
+            for query_idx in tqdm(range(len(qembs)))
+        ]
+        max_len = max([len(val[0]) for val in all_scored_pids])
+        logger.info(f"Max length of merged ids comes out to: {max_len}. Average length of merged ids is {sum([len(val) for val in all_scored_pids])/len(all_scored_pids)}")
+        result_ids = []
+        for i in range(len(qembs)):
+            current_set = list(all_scored_pids[i][0])
+            current_set.extend([current_set[0]] * (max_len - len(current_set)))
+            result_ids.append(current_set)
+        return torch.tensor(result_ids)
+        
+        
+    
+    ## picked up from dense_search in colbert searcher
+    def _search_helper(self, query,opt_vec, k):
+        query2 = query.clone()
+        query2[:,:,-1] = opt_vec
+        ## the "augmented" indices are only used for candidate gen
+        aggregated_ids, aggregated_scores = self._aggregate_over_indices(
+                                    self._parallel_search(query2, k)
+                            )
+        
+        if (not self.config.colbert_internal.rerank_internal):
+            return aggregated_ids, aggregated_scores
+        ## rerank over the base index
+        pids, scores = self.base_searcher.rank_modified(query, opt_vec, pids=aggregated_ids)
+        
+        
+        return pids[:k], list(range(1, k+1)), scores[:k]
+    
+    def _aggregate_over_indices(self,args):
+        ## what size?
+        ## pids_i, scores_i ->  from i^th index (/8)
+        ## max over scores to get pids
+        
+        ids, id_centroid_scores = zip(*args)
+        id_lengths = [len(id) for id in ids]
+        id_lengths_unique = [len(torch.unique(id)) for id in ids]
+        ids = torch.cat(ids, dim=0)
+        id_centroid_scores = torch.cat(id_centroid_scores, dim=0)
+        # max aggregate over ids
+        unique_ids, unique_indices = torch.unique(ids, return_inverse=True)
+        # unique_scores = scatter(
+        #     id_centroid_scores, unique_indices, dim=0, dim_size=len(unique_ids), reduce="max"
+        # )
+        ### USE SCATTER HERE WHEN PACKAGE INSTALLED
+        unique_scores = torch.full((len(unique_ids), id_centroid_scores.size(1)), float('-inf'), device=id_centroid_scores.device, dtype=id_centroid_scores.dtype)
+        # print(unique_scores.dtype, unique_indices.dtype, id_centroid_scores.dtype)
+        unique_scores = unique_scores.scatter_reduce(
+            dim=0,
+            index=unique_indices.unsqueeze(1).expand(-1, id_centroid_scores.size(1)),
+            src=id_centroid_scores,
+            reduce='amax',
+            include_self=False
+        ).float()
+        # pick average over id lengths?
+        k_for_topk = sum(id_lengths_unique)//len(id_lengths_unique) ## TODO:decide
+        
+        _, topk_indices = torch.topk(unique_scores.sum(dim=1), k_for_topk)
+        topk_ids = unique_ids[topk_indices]
+        topk_scores = unique_scores[topk_indices]
+        # from IPython import embed; embed()
+        
+        return topk_ids, topk_scores
+    
+        
+    
+    def _parallel_search(self, qembs,k):
+        queries = DummyQueryForColbert(len(qembs))
+        
+        if self.config.parallelization == "proc":
+            
+            with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+                futures = [
+                executor.submit(candidate_worker_for_mp, i, self.config, qembs, k)
+                for i in range(self.config.num_rh_augment)
+                ]
+                all_ids = [future.result() for future in concurrent.futures.as_completed(futures)]
+        elif self.config.parallelization == "thread":
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [
+                executor.submit(candidate_worker_for_th, self.searcher[i], qembs, k)
+                for i in range(self.config.num_rh_augment)
+                ]
+                all_ids = [future.result() for future in concurrent.futures.as_completed(futures)]
+        elif self.config.parallelization == "none":
+            all_ids = [self.searcher[i].gen_candidates(qembs, k) for i in range(self.config.num_rh_augment)]
+        else:
+            raise ValueError(f"Unknown parallelization method: {self.config.parallelization}")
+        return all_ids
+        
+def candidate_worker_for_mp(i, config, qembs, k):
+    with torch.inference_mode():
+        # with Run().context(RunConfig(nranks=1, experiment=f"colbert_{config.data.dataset_name}")):
+        with Run().context(RunConfig(nranks=1, experiment=f"{config.data.dataset_name}/{config.embedder.type}/{config.embedder.mv_type + ('_dblnorm' if config.dbl_norm else '_norm')}")):
+            colbert_config=ColBERTConfig(
+                nbits=config.colbert.nbits,
+                root="./colbert_beir_expts/",
+                augment=True,
+                dim=2*config.embedder.emb_dim,
+                # embedder_type=config.embedder.type,  NOTE: turned out unnecessary for now
+                dbl_norm=config.dbl_norm,
+                RH_file=f"./experiments/{config.data.dataset_name}/RH.{config.embedder.emb_dim}.{i}.pt",
+                generate_new_rh = False # RH_file is supposed to be generated by the index function
+            )
+            return Searcher(
+                checkpoint="/mnt/elk/data/kartikn/colbert/colbertv2.0",
+                index=f"nbits={config.colbert.nbits}.aug{config.num_rh_augment}.{i}",
+                config=colbert_config,
+            ).gen_candidates(qembs, k)
+            
+def candidate_worker_for_th(searcher:Searcher, qembs, k):
+    with torch.inference_mode():
+        return searcher.gen_candidates(qembs, k)
+  
 ################################################################################
 
 if __name__=="__main__":
@@ -442,6 +629,10 @@ if __name__=="__main__":
         logging.info(f"Running ColBERT with augmentation")
         # ColBERTAugmented(conf).run()
         obj = ColBERTaugwiththreshold(conf)
+    elif conf.method == "internal":
+        assert conf.augment == True
+        logging.info(f"Running ColBERT with internal rerank")
+        obj = ColBERT_internal(conf)
     if conf.index:
         import time
         start = time.time()

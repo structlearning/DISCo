@@ -12,8 +12,9 @@ gpus=($cuda_visible_devices)
 
 counter=0
 
-for bs in 10 25 50 100 200; do
-
+# for bs in 10 25 50 100 200; do
+# for bs in 50 100 200; do
+for bs in 200 ; do
     CUDA_VISIBLE_DEVICES=${gpus[$counter]} \
     python3 -m src.colbert_embs \
         k=15 \
@@ -22,6 +23,7 @@ for bs in 10 25 50 100 200; do
         data.dataset_name=$dataset_name \
         augment=True \
         index=False \
+        dbl_norm=True \
         colbert_topk=$bs &
     counter=$((counter + 1))
     if [ "$counter" -eq "$num_gpus" ]; then
@@ -29,3 +31,4 @@ for bs in 10 25 50 100 200; do
         counter=0
     fi
 done
+wait

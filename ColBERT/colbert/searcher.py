@@ -76,13 +76,14 @@ class Searcher:
         return self._search_all_Q(queries, Q, k, filter_fn=filter_fn, qid_to_pids=qid_to_pids)
 
     # queries; dummy class with .values() and .provenance() methods
-    def search_all_modified(self, queries, Q, M, k):
+    def search_all_modified(self, queries, Q, M, k,normalize_q=True):
 
         if self.config.augment: 
             Q  = self.checkpoint._RH_augmentation_query(Q)
             #NOTE: necessary because optvec is also appended to dummy 0 rows and so we need to mask it out. Similar behavior can be achieved by doinf the masking before augmentation
             Q = Q * M[:,:,None].to(torch.float32)
-            Q  = torch.nn.functional.normalize(Q, dim=-1, p=2) #NOTE: Important
+            if normalize_q:
+                Q  = torch.nn.functional.normalize(Q, dim=-1, p=2) #NOTE: Important
 
         assert (torch.allclose(torch.norm(Q.to(torch.float32), p=2, dim=-1) ,  M.to(torch.float32), atol=1e-5)), "Q is not normalized, please check the code"
         
@@ -147,3 +148,46 @@ class Searcher:
         pids, scores = self.ranker.rank(self.config, Q, filter_fn=filter_fn, pids=pids)
 
         return pids[:k], list(range(1, k+1)), scores[:k]
+
+    def gen_candidates(self, Q: torch.Tensor, k=10):
+        if k <= 10:
+            if self.config.ncells is None:
+                self.configure(ncells=1)
+            if self.config.centroid_score_threshold is None:
+                self.configure(centroid_score_threshold=0.5)
+            if self.config.ndocs is None:
+                self.configure(ndocs=256)
+        elif k <= 100:
+            if self.config.ncells is None:
+                self.configure(ncells=2)
+            if self.config.centroid_score_threshold is None:
+                self.configure(centroid_score_threshold=0.45)
+            if self.config.ndocs is None:
+                self.configure(ndocs=1024)
+        else:
+            if self.config.ncells is None:
+                self.configure(ncells=4)
+            if self.config.centroid_score_threshold is None:
+                self.configure(centroid_score_threshold=0.4)
+            if self.config.ndocs is None:
+                self.configure(ndocs=max(k * 4, 4096))
+        Q_aug = self.checkpoint._RH_augmentation_query(Q[:, :self.config.query_maxlen])
+        Q_aug = torch.nn.functional.normalize(Q_aug.squeeze(0), dim=-1, p=2) # NOTE: Candidate generation uses only the query tokens
+        if self.ranker.use_gpu:
+            Q_aug = Q_aug.cuda().half()
+        return self.ranker.generate_candidate_pids(Q_aug, self.config.ncells, pid_centroid_scores=True)
+        
+
+    def rank_modified(self, Q, opt_vec, filter_fn=None, pids=None):
+        assert pids is not None, "pids should not be None in rank_modified"
+        with torch.inference_mode():
+            
+            pids = torch.tensor(pids, dtype=torch.int32, device=Q.device)
+            centroid_scores = None
+
+            scores, pids = self.ranker.score_pids_modified(self.config, Q, pids, centroid_scores,opt_vec)
+
+            scores_sorter = scores.sort(descending=True)
+            pids, scores = pids[scores_sorter.indices].tolist(), scores_sorter.values.tolist()
+
+            return pids, scores

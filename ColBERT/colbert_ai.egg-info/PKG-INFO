@@ -1,4 +1,4 @@
-Metadata-Version: 2.2
+Metadata-Version: 2.4
 Name: colbert-ai
 Version: 0.2.20
 Summary: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT
@@ -29,6 +29,7 @@ Dynamic: author-email
 Dynamic: description
 Dynamic: description-content-type
 Dynamic: home-page
+Dynamic: license-file
 Dynamic: provides-extra
 Dynamic: requires-dist
 Dynamic: requires-python

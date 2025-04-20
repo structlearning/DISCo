@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# List of available GPUs
 if [ "$HOSTNAME" = "elk" ]; then
     GPUS=(1 2 3 4 6)
 elif [ "$HOSTNAME" = "fox" ]; then
@@ -13,13 +12,6 @@ fi
 NUM_RH_AUGMENT=8
 DATASET_NAME="$1"
 
-python3 -m src.colbert_embs \
-    data.dataset_name="$DATASET_NAME" \
-    overwrite_index=True \
-    index=True \
-    augment=False \
-    method="baseline" &
-
 for ((i = 0; i < NUM_RH_AUGMENT; i++)); do
     GPU_INDEX=$((i % ${#GPUS[@]}))
     GPU_ID=${GPUS[$GPU_INDEX]}
@@ -30,23 +22,13 @@ for ((i = 0; i < NUM_RH_AUGMENT; i++)); do
     CUDA_VISIBLE_DEVICES=$GPU_ID \
     python3 -m src.colbert_embs \
         data.dataset_name="$DATASET_NAME" \
-        overwrite_index=True \
+        overwrite_index=False \
         index=True \
         augment=True \
-        dbl_norm=True \
+        dbl_norm=False \
         method="augmented" \
         rh_num=$i &
-
-    # Double augmentation flag off below
-    # CUDA_VISIBLE_DEVICES=$GPU_ID \
-    # python3 -m src.colbert_embs \
-    #     data.dataset_name="$DATASET_NAME" \
-    #     overwrite_index=False \
-    #     index=True \
-    #     augment=True \
-    #     dbl_norm=False \
-    #     method="augmented" \
-    #     generate_new_rh=True \
-    #     rh_num=$i &
+    
 done
+
 wait

@@ -10,6 +10,7 @@ class CandidateGeneration:
         self.use_gpu = use_gpu
 
     def get_cells(self, Q, ncells):
+        # print(self.codec.centroids.shape, Q.shape)
         scores = (self.codec.centroids @ Q.T)
         if ncells == 1:
             cells = scores.argmax(dim=0, keepdim=True).permute(1, 0)
@@ -28,12 +29,16 @@ class CandidateGeneration:
             eids = eids.cuda()
         return eids, scores
 
-    def generate_candidate_pids(self, Q, ncells):
+    def generate_candidate_pids(self, Q, ncells, pid_centroid_scores=False):
         cells, scores = self.get_cells(Q, ncells)
 
         pids, cell_lengths = self.ivf.lookup(cells)
         if self.use_gpu:
             pids = pids.cuda()
+        if pid_centroid_scores:
+            cell_lengths = cell_lengths.to(torch.long)
+            indices = torch.repeat_interleave(torch.arange(len(cell_lengths), device=cell_lengths.device), cell_lengths)
+            scores = scores[indices]
         return pids, scores
 
     def generate_candidate_scores(self, Q, eids):

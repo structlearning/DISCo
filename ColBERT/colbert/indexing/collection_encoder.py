@@ -90,6 +90,7 @@ class CollectionEncoder:
         os.makedirs(os.path.join(file_prefix, f"compressed_{self.config.lin_dim}"), exist_ok=True)
         os.makedirs(os.path.join(file_prefix, "masks"), exist_ok=True)
         
+        ## TODO: create some lock so that we do not have redundant computation in this function when there are concurrent runs
         status_file = os.path.join(file_prefix, "status.json")
         status_metadata = {}
         if os.path.exists(status_file):
