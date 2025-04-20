@@ -5,7 +5,7 @@ import os
 
 from colbert.modeling.tokenization import QueryTokenizer, DocTokenizer
 from colbert.utils.amp import MixedPrecisionManager
-from colbert.modeling.colbert import ColBERT, ColBERT_rhaug
+from colbert.modeling.colbert import ColBERT
 
 
 def pool_embeddings_hierarchical(

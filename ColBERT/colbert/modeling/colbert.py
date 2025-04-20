@@ -240,44 +240,6 @@ class ColBERT(BaseColBERT):
         mask = [[(x not in skiplist) and (x != self.pad_token) for x in d] for d in input_ids.cpu().tolist()]
         return mask
 
-class ColBERT_rhaug(ColBERT):
-    def __init__(self, name='bert-base-uncased', colbert_config=None,hyperplane_for_aug:torch.Tensor=None):
-        super().__init__(name, colbert_config)
-        #TODO: INDRA
-        raise ValueError("ColBERT_rhaug should not be used as of now.")
-        self.hyperplane_for_aug = hyperplane_for_aug
-        
-    def query(self, input_ids, attention_mask):
-        Q_0 = super().query(input_ids, attention_mask)
-        self.hyperplane_for_aug = self.hyperplane_for_aug.to(Q_0.device)
-        sgn = torch.sign(Q_0@self.hyperplane_for_aug)
-        Q_1 = torch.cat([Q_0,sgn*Q_0], dim=-1)/sqrt(2)
-        return Q_1
-    def doc(self, input_ids, attention_mask, keep_dims=True):
-        assert keep_dims in [True, False, 'return_mask']
-
-        input_ids, attention_mask = input_ids.to(self.device), attention_mask.to(self.device)
-        D = self.bert(input_ids, attention_mask=attention_mask)[0]
-        D = self.linear(D)
-        mask = torch.tensor(self.mask(input_ids, skiplist=self.skiplist), device=self.device).unsqueeze(2).float()
-        D = D * mask
-
-        D = torch.nn.functional.normalize(D, p=2, dim=2)
-        
-        sgn = torch.sgn(D@self.hyperplane_for_aug)
-        D = torch.cat([D,sgn*D], dim=-1)/sqrt(2)
-        
-        if self.use_gpu:
-            D = D.half()
-
-        if keep_dims is False:
-            D, mask = D.cpu(), mask.bool().cpu().squeeze(-1)
-            D = [d[mask[idx]] for idx, d in enumerate(D)]
-
-        elif keep_dims == 'return_mask':
-            return D, mask.bool()
-
-        return D
 # TODO: In Query/DocTokenizer, use colbert.raw_tokenizer
 
 # TODO: The masking below might also be applicable in the kNN part
