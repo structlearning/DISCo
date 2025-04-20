@@ -1,8 +1,10 @@
 import torch
 import os
 import numpy as np
-
+import time
 from string import punctuation
+
+from collections import defaultdict
 
 import torch.nn.functional as F
 
@@ -16,10 +18,37 @@ import torch.nn.functional as F
 from colbert.infra.config import ColBERTConfig, RunConfig
 from colbert import Checkpoint
 from colbert.infra.run import Run
-
+import gc
 logger = logging.getLogger(__name__)
 
 
+class RetrievalCorpus:
+    def __init__(self, unique_emb, unique_mask, idx_matrix):
+        """
+        unique_emb  : (U, padding, D) float tensor
+        unique_mask : (U, padding) bool  tensor
+        idx_matrix  : (Q, K) long  tensor
+        """
+        self.emb     = unique_emb
+        self.mask    = unique_mask
+        self.idx     = idx_matrix
+        self.device = unique_emb.device
+
+    def __getitem__(self, key):
+        # Expect key to be a 2‐tuple: (q_idx, k_idx)
+        if not (isinstance(key, tuple) and len(key) == 2):
+            raise IndexError("Use corpus[q_idx, k_idx]")
+
+        q_idx, k_idx = key
+        # this handles ints, slices, LongTensors, bool masks, etc.
+        u_idx = self.idx[q_idx, k_idx]  # shape = broadcast(q_idx,k_idx)
+
+        # now emb[u_idx] has shape = (*u_idx.shape, pad, D)
+        return self.emb[u_idx], self.mask[u_idx]
+
+    def full(self):
+        # return the full (Q,K,pad,D) and (Q,K,pad)
+        return self.emb[self.idx], self.mask[self.idx]
 
 # parts of this code are modified from the beir lib
 # A bert embedder with random {-1,1} compression.
@@ -97,7 +126,28 @@ class BERTEmbedder:
     def get_query_batched(self,batch_size,device,start=0):
         for i in range(start,self.qembs.size(0), batch_size):
             yield self.qembs[i:i+batch_size].to(device),self.qmasks[i:i+batch_size].to(device)
-            
+
+
+    def create_mapping(self, indices):
+        mapping = {}
+        H, W = indices.shape
+
+        for i in range(H):
+            for j in range(W):
+                batch_info = self.docid_to_batchinfo[str(indices[i][j].item())]
+                b   = batch_info[0]
+                m   = batch_info[1]
+                off = batch_info[2]
+                key = (b, m)
+                # store offset and the 2D index tuple
+                mapping.setdefault(key, []).append((off, (i, j)))
+
+        # sort each list by offset
+        for key in mapping:
+            mapping[key].sort(key=lambda x: x[0])
+
+        return mapping
+        
     ## IMPORTANT: 
     ## TODO: this is not tensorised. the disk op is not tensorisable, but what about the rest
     ## Indices is a tensor of indexes (int)
@@ -108,166 +158,72 @@ class BERTEmbedder:
         
             ## fetch from disk ## TODO:error found
         if self.config.mode == "disk":
-            flat_indices = indices.flatten()
-            assert(os.path.exists(self.embedding_path + "corpus_0.pkl"))
+            # indices: (Q, K) global doc‐IDs
+            Q, K = indices.shape
+            flat = indices.view(-1)  # (Q*K,)
 
-            raise ValueError("Bug detected in the code: run in mem mode")
-            batch_size = self.config.batch_size
-            
-            # logger.debug(f"indices shape: {indices.shape}, flat indices shape:{flat_indices.shape}")
-            unique_indices, inverse_indices = torch.unique(flat_indices, return_inverse=True)
-            # logger.debug(f"unique indices shape: {unique_indices.shape}")
-            # Step 2: Split indices into file numbers and sub-indices
-            file_numbers = unique_indices // batch_size
-            sub_indices = unique_indices % batch_size
-            # logger.debug(f"file numbers shape: {file_numbers.shape}, sub indices shape: {sub_indices.shape}")
-            # Step 3: Group sub-indices by file number
-            file_groups = {}
-            for file_num, sub_idx in zip(file_numbers.tolist(), sub_indices.tolist()):
-                if file_num not in file_groups:
-                    file_groups[file_num] = []
-                file_groups[file_num].append(sub_idx)
+            # find the unique docs and build a back‐pointer
+            unique_ids, inv = torch.unique(flat, sorted=True, return_inverse=True)
+            # inv: (Q*K,) tells you for each flattened slot which unique‐row to use
+            inv = inv.view(Q, K)  # now (Q, K)
 
-            # Step 4: Load and process files
-            all_cembs = []
-            all_cmasks = []
-            
-            for file_num, sub_idxs in file_groups.items():
-                # Load batch file once per group
-                cemb = load(self.embedding_path + f"corpus_{file_num}.pkl")
-                cmask = load(self.embedding_path + f"corpus_masks_{file_num}.pkl")
-                # logger.debug(f"Loaded embeddings of shape {cemb.shape} and masks of shape {cmask.shape}")
-                pad_size = padding - cemb.size(1)
-                # Convert subindices to tensor and ensure valid range
-                sub_idxs_tensor = torch.tensor(sub_idxs, device=cemb.device)
-                sub_idxs_tensor = sub_idxs_tensor[sub_idxs_tensor < cemb.size(0)]
-                # logger.debug(f"Sub indices tensor shape: {sub_idxs_tensor.shape}")
-                # Gather embeddings and masks
-                logger.info(f"Pad size: {pad_size}")
-                all_cembs.append(F.pad(cemb[sub_idxs_tensor],(0,pad_size,0,0), mode='constant', value=0))
-                all_cmasks.append(F.pad(cmask[sub_idxs_tensor],(0,pad_size), mode='constant', value=0))
-                # logger.debug(f"Appended embeddings of shape {cemb[sub_idxs_tensor].shape} and masks of shape {cmask[sub_idxs_tensor].shape}")
-            # Step 5: Combine results
-            logger.info(f"Combining results: len(all_cembs): {len(all_cembs)}")
-            logger.info(f"{all_cembs[0].shape}, {all_cembs[1].shape}")
-            unique_cembs = torch.cat(all_cembs, dim=0)
-            unique_cembs.div_(torch.norm(unique_cembs,dim=-1,keepdim=True))
-            unique_cmasks = torch.cat(all_cmasks, dim=0)
-            # logger.debug(f"Unique embeddings shape: {unique_cembs.shape}, Unique masks shape: {unique_cmasks.shape}")
-            # Step 6: Map back to original indices
-            final_cembs = unique_cembs[inverse_indices]
-            final_cmasks = unique_cmasks[inverse_indices]
-            # logger.debug(f"Final embeddings shape: {final_cembs.shape}, Final masks shape: {final_cmasks.shape}")
-            
-            return final_cembs.reshape(indices.shape+final_cembs.shape[1:]), final_cmasks.reshape(indices.shape+final_cmasks.shape[1:])
-            
-        # self.config.mode == "mem"
+            U = unique_ids.size(0)
+            D = self.config.emb_dim
+
+            # preallocate the unique buffers
+            device = indices.device
+            unique_emb  = torch.zeros(U, padding, D, device=device)
+            unique_mask = torch.zeros(U, padding, dtype=torch.bool, device=device)
+
+            # group by minibatch - so that each .pkl file is loaded only once
+            shard_groups = defaultdict(list)
+            # mapping doc_id -> (batch, shard, local_offset)
+            for u_idx, doc_id in enumerate(unique_ids.tolist()):
+                b, s, off = self.docid_to_batchinfo[str(doc_id)]
+                shard_groups[(b, s)].append((u_idx, off))
+
+            # 4) for each shard: load once, pad once, then pick out all needed rows
+            for (b, s), lst in shard_groups.items():
+                print(f"Batch {b} Minibatch {s}")
+                fp   = self.embedding_path(f"compressed_{D}", b, s)
+                data = torch.load(fp, map_location='cpu')
+                cemb = data['embs_compressed']   # (N, L, D)
+                cm   = torch.load(self.embedding_path("masks", b, s),
+                                map_location='cpu')['masks']  # (N, L)
+                # zero‑out last dim
+                cemb[..., -1] = 0
+
+                # pad to padding set size
+                L = cemb.shape[1]
+                if L < padding:
+                    pad_len = padding - L
+                    cemb = torch.cat([cemb, torch.zeros((cemb.size(0), pad_len, D), dtype=cemb.dtype, device='cpu')], dim=1)
+                    cm = torch.cat([cm, torch.zeros((cm.size(0), pad_len), dtype=cm.dtype, device='cpu')], dim=1)
+                cemb = cemb.to(device)
+                cm = cm.to(device)
+
+                # unpack (u_idx, off) list
+                u_idxs, offs = zip(*lst)
+                u_t   = torch.tensor(u_idxs, dtype=torch.long, device=device)
+                off_t = torch.tensor( offs, dtype=torch.long, device=device)
+
+                # fill unique buffers
+                unique_emb[u_t] = cemb[off_t]
+                unique_mask[u_t] = cm[off_t]
+
+                del cemb, cm, data
+                torch.cuda.empty_cache()
+
+            # Normalize all embeddings to unit‑norm
+            unique_emb = F.normalize(unique_emb, p=2, dim=-1)
+            return RetrievalCorpus(unique_emb, unique_mask, inv)
+        
         return self.cembs[indices],self.cmasks[indices]
     def get_query(self,indices):
         """
             returns query embeddings with masks
         """
         return self.qembs[indices],self.qmasks[indices]
-    
-    ## Here it loads the embeddings from file/ generates the embeddings if required. embeddings are nt=ot generated in the ColBERTEMbedder subclass 
-    def embed_full_dataset(self, data, mode="disk",pad=330):
-        raise ValueError("This function should not bo longer be used.")
-        self.embedding_path = f"./pickles/embeddings/{self.variety}_{self.model_name}_{data.dataset_name}/"
-        if mode == "disk":
-            assert(self.config.save_embeddings)
-        assert mode in ["disk","mem"]
-            
-        logger.info(f"Embedding path: {self.embedding_path}")
-        logger.info(f"Embedding mode: {mode}")
-        # if embeddings already exist load them
-        if (not self.config.recompute_emb) and os.path.exists(self.embedding_path+"query.pkl"):
-            logger.info("Existing embeddings will be loaded")
-            self.qembs = load(self.embedding_path+"query.pkl")
-            self.qembs.div_(torch.norm(self.qembs,dim=-1,keepdim=True))
-            self.qmasks = load(self.embedding_path+"query_masks.pkl")
-            logger.info("Query embeddings loaded")
-            if mode=="mem":
-                
-                num_batches = 0
-                while os.path.exists(self.embedding_path+f"corpus_{num_batches}.pkl"):
-                    num_batches+=1
-                batch_size, _, __ = load(self.embedding_path+"corpus_0.pkl").shape
-                total_size = (num_batches-1)*batch_size + load(self.embedding_path+f"corpus_{num_batches-1}.pkl").size(0) 
-                # dtype = torch.bfloat16 ## DYTPE OF FLOAT
-                dtype = torch.float32
-                logger.info(f"Allocating memory for full corpus")
-                self.cembs = torch.zeros((total_size,pad,self.config.emb_dim),dtype=dtype, device="cpu", pin_memory=True)
-                logger.info(f"Allocating memory for full masks")
-                self.cmasks = torch.zeros((total_size,pad),dtype=torch.int64, device="cpu", pin_memory=True)
-                
-                for i in range(num_batches):
-                    cemb = load(self.embedding_path+f"corpus_{i}.pkl")
-                    cmask = load(self.embedding_path+f"corpus_masks_{i}.pkl")
-                    cemb.div_(torch.norm(cemb,dim=-1,keepdim=True))
-                    # logger.debug(f"cemb device: {cemb.device}")
-                    self.cembs[i*batch_size:i*batch_size+cemb.size(0),:cemb.size(1),:].copy_(cemb,non_blocking=True)
-                    self.cmasks[i*batch_size:i*batch_size+cemb.size(0),:cemb.size(1)].copy_(cmask,non_blocking=True)
-                torch.cuda.synchronize() # just in case
-                logger.info("Corpus embeddings loaded")
-            return
-        
-        # else compute embeddings
-        logger.info("Computing embeddings")
-        corpus, query = data.get_data()
-        batch_size = self.config.batch_size
-        cvals = map(lambda v : (v.get("title","") + " " + v["text"]).strip()  ,corpus.values())
-        cvals_batched = tqdm(batch_iterator(cvals, batch_size=batch_size), desc="Processing Corpus", total=(len(corpus.keys())+ batch_size - 1)//batch_size)
-        
-        if self.compress:
-            compression_matrix = self.get_compression_matrix()
-        else:
-            compression_matrix = torch.eye(768).unsqueeze(0).to(self.device)
-        
-        # todo: batch this
-        logging.info("Starting with Tokenisation")
-        qtokens = self.tokenizer(list(query.values()), return_tensors='pt', padding=True, truncation=True)
-        logging.info("Query tokenisation complete")
-        # logging.info("Corpus Tokenisation complete")
-        
-        logging.info("Starting with Embedding")
-        with torch.no_grad(): 
-            query_embs = torch.concatenate([(self.model(**qt).last_hidden_state@compression_matrix).cpu() for qt in batch_tensordict(qtokens,batch_size=batch_size,device=self.device)],dim=0)
-            query_embs.div_(torch.norm(query_embs,dim=-1,keepdim=True))
-            logging.info("Query Embedding complete")
-            all_cembs = []
-            all_cmasks = []
-            for cval_batch in cvals_batched:
-                tokens = self.tokenizer(list(cval_batch), return_tensors='pt', padding=True, truncation=True).to(self.device)
-                embeddings = (self.model(**tokens).last_hidden_state @ compression_matrix)
-                embeddings.div_(torch.norm(embeddings,dim=-1,keepdim=True))
-                masks = self._mask(tokens["input_ids"], self.skiplist).to(tokens["attention_mask"].device)
-                all_cembs.append(embeddings.to(device="cpu",non_blocking=True))
-                all_cmasks.append(masks)
-            
-            logging.info("Corpus Embedding complete")
-            self.qembs, self.qmasks = query_embs, qtokens["attention_mask"]
-            torch.cuda.synchronize()
-            if self.config.save_embeddings:
-                for i,(c,m) in enumerate(zip(all_cembs, all_cmasks)):
-                    save(c, f"{self.embedding_path}corpus_{i}.pkl")
-                    save(m, f"{self.embedding_path}corpus_masks_{i}.pkl")
-                ## change this
-                save(self.qmasks, f"{self.embedding_path}query_masks.pkl") 
-                save(self.qembs, f"{self.embedding_path}query.pkl")
-                logger.info("Embeddings saved")
-            if mode == "disk":
-                del all_cembs,all_cmasks
-            elif mode == "mem":
-                for i in range(len(all_cembs)):
-                    all_cembs[i].div_(torch.norm(all_cembs[i],dim=-1,keepdim=True))
-                    all_cembs[i] = F.pad(all_cembs[i],(0,0,0,512-all_cembs[i].size(1)),mode='constant',value=0)
-                    all_cmasks[i] = F.pad(all_cmasks[i],(0,512-all_cmasks[i].size(1)),mode='constant',value=0)
-                self.cembs = torch.cat(all_cembs,dim=0)
-                # self.cembs.div_(torch.norm(self.cembs,dim=-1,keepdim=True))
-                self.cmasks = torch.cat(all_cmasks,dim=0)
-            logging.info("Embedding complete")
-            return
-    
     def print_dataset_statistics(self):
         pass 
     
@@ -301,8 +257,10 @@ class ColBERTEmbedder(BERTEmbedder):
                 mask_dump_path = f"{dump_path}/masks"
                 os.makedirs(embed_dump_path, exist_ok=True)
                 os.makedirs(mask_dump_path, exist_ok=True)
-                torch.save(embs_dump, embed_dump_path+ "/all.pkl")
-                torch.save(self.qmasks, mask_dump_path+"/all.pkl")
+                ############### Commented because I have no write access to embedding folder ############
+                # torch.save(embs_dump, embed_dump_path+ "/all.pkl")
+                # torch.save(self.qmasks, mask_dump_path+"/all.pkl")
+                #########################################################################################
                 self.qembs = torch.nn.functional.normalize(self.qembs,dim=-1,p=2)  #NOTE: query_modified already returning [:,:,-1] = 0 -> normalized embeds. Perhaps unnecessary
                 self.qmasks = self.qmasks.to(self.qembs.device)
 
@@ -334,7 +292,8 @@ class ColBERTEmbedder(BERTEmbedder):
         
         ## if disk mode return
         if mode=="disk":
-            logger.info("Disk mode selected, stopping here")
+            self.docid_to_batchinfo_file  = f"./docid_to_batchinfo/docid_to_batchinfo_{self.dataset_name}.json"
+            self.docid_to_batchinfo = load(self.docid_to_batchinfo_file)
             return
         ## if mem mode load to memory
         assert mode == "mem", "Mode should be mem"
@@ -354,6 +313,8 @@ class ColBERTEmbedder(BERTEmbedder):
                 j += 1
                 num += cmask.size(0)
                 max_len = max(max_len,cmask.size(1))
+                print(i,j,"loaded")
+
         logger.info(f"Loaded to list, fitting to tensor")
         self.cembs = torch.zeros((num,max_len,self.config.emb_dim),dtype=torch.float32,device="cpu",pin_memory=True)
         self.cmasks = torch.zeros((num,max_len),dtype=torch.float32,device="cpu",pin_memory=True)
