@@ -10,9 +10,6 @@ from src.utils import partial_chamfer_sim_batched_with_rerank, save
 
 from tqdm import tqdm
 
-from colbert.infra import Run, RunConfig, ColBERTConfig
-from colbert import Indexer, Searcher
-
 # from torch_scatter import scatter
 
 from multiprocessing import Pool
@@ -106,7 +103,6 @@ class ColBERTBaseE2E(BaseE2E):
                 self.config.rh_list = [self.config.rh_num]
             else:
                 self.config.rh_list = list(range(self.config.num_rh_augment))
-                assert False, self.config
                 
         corpus_tsv_filename, _ = self.dataloader.get_tsv()
         if self.config.augment:
@@ -611,7 +607,7 @@ def candidate_worker_for_mp(i, config, qembs, k, prune_candidates):
                 config=colbert_config,
             ).gen_candidates(qembs, k, prune_candidates)
             
-def candidate_worker_for_th(searcher:Searcher, qembs, k, prune_candidates):
+def candidate_worker_for_th(searcher, qembs, k, prune_candidates):
     with torch.inference_mode():
         return searcher.gen_candidates(qembs, k, prune_candidates)
   
@@ -629,6 +625,12 @@ if __name__=="__main__":
     os.makedirs("logs/colbert", exist_ok=True)
     logging.basicConfig(filename=f'logs/colbert/{conf.data.dataset_name}_{conf.retriever.type}.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(process)d - %(message)s')
     
+    if conf.embedder.mv_type == "colbertv2-plaid":
+        from colbert.infra import Run, RunConfig, ColBERTConfig
+        from colbert import Indexer, Searcher
+    elif conf.embedder.mv_type == "colbertv2-base":
+        from colbert_base.infra import Run, RunConfig, ColBERTConfig
+        from colbert_base import Indexer, Searcher
 
     if conf.method == "baseline":
         assert conf.augment == False
