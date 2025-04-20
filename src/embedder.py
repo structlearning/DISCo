@@ -269,6 +269,24 @@ class ColBERTEmbedder(BERTEmbedder):
             returns query embeddings with masks
         """
         return super().get_query(indices)
+    
+    def iterate_over_batches(self,device, mode="disk"):
+        assert mode in ["disk","mem"]
+        if mode=="mem":
+            return self.cembs.to(device),self.cmasks.to(device)
+        # mode == "disk"
+        prefix_str = f"./experiments/{self.dataset_name}/{self.type}"
+        self.embedding_path = lambda folder,batch,minibatch : f"{prefix_str}/corpus/{folder}/batch_{batch}.{minibatch}.pkl"
+        for i in range(self.num_batches):
+            j = 0
+            while os.path.exists(self.embedding_path(f"compressed_{self.config.emb_dim}", i, j)):
+                cemb = torch.load(self.embedding_path(f"compressed_{self.config.emb_dim}", i, j))["embs_compressed"]
+                cmask = torch.load(self.embedding_path("masks", i, j))["masks"]
+                j+=1
+                cemb[:,:,-1] = 0 #Important
+                cembs = torch.nn.functional.normalize(cemb,dim=-1,p=2)
+                yield cembs.to(device),cmask.to(device)
+                
      
     def embed_full_dataset(self,data,mode="disk",pad=330):
         dataset_name = data.dataset_name

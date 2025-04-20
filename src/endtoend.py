@@ -354,7 +354,7 @@ class GreedyBaseline_submodlib(BaseE2E):
         return result
         
         
-    def run(self):
+    def run_old(self):
         result_path = f"./pickles/results/{self.variety}_{self.dataloader.dataset_name}_{self.config.retriever.type}{self.suffix}_k{self.k}.pkl"
         if os.path.exists(result_path) and False:
             logger.info("Loading existing results")
@@ -417,6 +417,79 @@ class GreedyBaseline_submodlib(BaseE2E):
         logger.info(f"Total time taken for rescoring: {end-start} seconds")
         save(opts,result_path)
         return opts
+
+    def run(self):
+        result_path = f"./pickles/results/{self.variety}_{self.dataloader.dataset_name}_{self.config.retriever.type}{self.suffix}_k{self.k}.pkl"
+        if os.path.exists(result_path) and False:
+            logger.info("Loading existing results")
+            return load(result_path)
+        
+        self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode) 
+        self.batched = True
+        self.query_num = len(self.embedder.qembs)
+        # fetch from checkpoints
+        set_seed(self.config.baseline.seed)
+        opts = []
+        
+        flattened_queries = self.embedder.qembs.reshape(-1,self.embedder.qembs.size(-1))[self.embedder.qmasks.reshape(-1).bool()].to(self.device)
+        query_sizes = self.embedder.qmasks.sum(dim=-1)
+        partials_list = []
+        corp_size = 0
+        for cemb,cmask in tqdm(self.embedder.iterate_over_batches(self.device,self.config.embedder.mode),desc="Corpus"):
+            corp_size += cmask.size(0)
+            prod = cemb@(flattened_queries.T)
+            prod[~cmask.bool()] = -10
+            partials_list.append(np.array(prod.amax(dim=1).cpu().tolist()))
+            
+        q_start = 0
+        
+        logger.info(f"Starting from query_id: 0")
+        start = time.time()
+        lap = start
+        ## speed this up with multiprocessing bruh
+        for query_id,size in tqdm(enumerate(query_sizes), desc="Query", total=self.query_num):
+            partial = np.concatenate([elem[:,q_start:q_start+size]for elem in partials_list],axis=0)
+            opt_for_each_query = submodlib.functions.facilityLocation.FacilityLocationFunction(n=corp_size,mode="dense",separate_rep=True,n_rep=size,sijs=partial.T)
+    
+            q_start += size
+            # opt_for_each_query = submodlib.functions.facilityLocation.FacilityLocationFunction(n=self.config.baseline.bucket_size,mode="dense",separate_rep=True,n_rep=len(qvec),sijs=partial_chamfer)
+            result = opt_for_each_query.maximize(budget=self.k,stopIfZeroGain=True,optimizer=self.optimizer)
+            opts.append([i[0] for i in result])
+            
+        end = time.time()
+        logger.info(f"Total time taken for running submodlib: {end-start} seconds")
+        logger.info(f"Now recomputing scores")
+        start = time.time()
+        max_len = max([len(i) for i in opts])
+        opts_tensor = torch.tensor([opt_i + [opt_i[-1]]*(max_len-len(opt_i)) for opt_i in opts],dtype=torch.int64)
+        logger.info(f"opts tensor: {opts_tensor}; max_len {max_len}")
+        
+        cembs_to_rescore, cmasks_to_rescore = self.embedder.get_corpus(opts_tensor)
+        # q,k,corpus_set,emb; q,k,corpus_set;
+        cembs_to_rescore, cmasks_to_rescore = cembs_to_rescore.to(self.device), cmasks_to_rescore.to(self.device)
+        qemb_masked = self.embedder.qembs*(self.embedder.qmasks.unsqueeze(-1).to(self.embedder.qembs.device,self.embedder.qembs.dtype))
+        qemb_masked = qemb_masked.to(self.device)
+        sim_matrix = torch.where(
+                        cmasks_to_rescore.bool().unsqueeze(-1),
+                        torch.einsum("qkse,qce->qksc",cembs_to_rescore,qemb_masked),
+                        -10   
+                    )
+        # logger.info(f"Sim matrix: {sim_matrix.shape}")
+        partials = sim_matrix.amax(dim=2)
+        # logger.info(f"Partial: {partials.shape}")
+        # logger.info(f"Partial: {partials}")
+        cum_partials = torch.cummax(partials,dim=1).values
+        logger.info(f"Cum_partials: {cum_partials.shape}")
+        logger.info(f"Cum_partials: {cum_partials}")
+        scores = cum_partials.sum(dim=2)
+        logger.info(f"Scores: {scores.shape}")
+        logger.info(f"Scores: {scores}")
+        opts = (opts_tensor.cpu(),scores.cpu())
+        end = time.time()
+        logger.info(f"Total time taken for rescoring: {end-start} seconds")
+        save(opts,result_path)
+        return opts
+  
 
 if __name__=="__main__":
     import warnings
