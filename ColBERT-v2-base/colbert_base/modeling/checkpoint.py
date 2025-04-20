@@ -210,10 +210,8 @@ class Checkpoint(ColBERT):
                     D = self._no_augmentation(embs)
                 
                 D = torch.nn.functional.normalize(D, p=2, dim=2)
-                if self.use_gpu:
-                    D = D.half()
                 
-                assert torch.allclose( torch.norm(D.to(torch.float32), p=2, dim=-1), torch.ones(D.size(0), device=D.device, dtype=torch.float32), atol=1e-3), "D is not normalized"
+                D = D.half()
                 
                 ## keep_dims for self.doc is return_mask
                 mask = mask.bool()
@@ -222,6 +220,9 @@ class Checkpoint(ColBERT):
 
                 D = D.view(-1, self.colbert_config.dim)
                 D = D[mask.bool().flatten()].cpu()
+                
+                assert torch.allclose( torch.norm(D.to(torch.float32), p=2, dim=-1), torch.ones(D.size(0), device=D.device, dtype=torch.float32), atol=1e-3), "D is not normalized"
+                
                 
                 D = (D, doclens)
                 ## 

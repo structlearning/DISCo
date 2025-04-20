@@ -16,7 +16,7 @@ class ColBERT(BaseColBERT):
 
     def __init__(self, name='bert-base-uncased', colbert_config=None):
         super().__init__(name, colbert_config)
-
+        self.RH = None
         if self.colbert_config.mask_punctuation:
             self.skiplist = {w: True
                              for symbol in string.punctuation
@@ -115,8 +115,8 @@ class ColBERT(BaseColBERT):
             D = self._no_augmentation(D)
 
         D = torch.nn.functional.normalize(D, p=2, dim=2)
-        if self.use_gpu:
-            D = D.half()
+        # if self.use_gpu:
+        D = D.half()
 
         if keep_dims is False:
             D, mask = D.cpu(), mask.bool().cpu().squeeze(-1)

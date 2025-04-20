@@ -248,7 +248,7 @@ class CollectionIndexer():
         with self.saver.thread():
             batches = self.collection.enumerate_batches(rank=self.rank)
             for chunk_idx, offset, passages in tqdm.tqdm(batches, disable=self.rank > 0):
-                embs_file_prefix = self.config.index_path_.rsplit('_', 1)[0] + "_embs"
+                embs_file_prefix = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(self.config.index_path_)))) + "/corpus"
                 os.makedirs(embs_file_prefix, exist_ok=True)
                 ## NO ENCODE_PASSAGES_TO_DUMP: DO THAT IN COLBERT-PLAID ITSELF
                 embs, doclens = self.encoder.encode_passages_from_disk(chunk_idx, embs_file_prefix)

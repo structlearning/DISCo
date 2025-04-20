@@ -63,10 +63,7 @@ class CollectionEncoder():
                     passages_batch,
                     bsize=self.config.bsize,
                     keep_dims="flatten",
-                    showprogress=False,
-                    pool_factor=self.config.pool_factor,
-                    clustering_mode=self.config.clustering_mode,
-                    protected_tokens=self.config.protected_tokens,
+                    showprogress=False
                 )
                 embs.append(embs_)
                 doclens.extend(doclens_)
@@ -118,9 +115,9 @@ class CollectionEncoder():
                 embs_, doclens_ = self.checkpoint.docFromBaseEmb(
                         compressed_data["embs_compressed"],
                         mask_data["masks"],
-                        bsize=self.config.index_bsize,
+                        # bsize=self.config.index_bsize,
                         # keep_dims="flatten",
-                        showprogress=(not self.use_gpu),
+                        # showprogress=(not self.use_gpu),
                     )
                 embs.append(embs_)
                 doclens.extend(doclens_)
