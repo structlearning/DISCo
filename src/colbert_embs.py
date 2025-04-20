@@ -505,22 +505,33 @@ class ColBERT_internal(ColBERTAugmented):
         query2[:,:,-1] = opt_vec
         ## the "augmented" indices are only used for candidate gen
         aggregated_ids, aggregated_scores = self._aggregate_over_indices(
-                                    self._parallel_search(query2, k)
+                                    self._parallel_search(query2, k),
+                                    prune_candidates=self.config.colbert_internal.prune_candidates
                             )
         
         if (not self.config.colbert_internal.rerank_internal):
             return aggregated_ids, aggregated_scores
         ## rerank over the base index
         pids, scores = self.base_searcher.rank_modified(query, opt_vec, pids=aggregated_ids)
-        
+        ## "127" dim embeddings 
         
         return pids[:k], list(range(1, k+1)), scores[:k]
     
-    def _aggregate_over_indices(self,args):
+    ## pid, pid_centroid_score (estimate) for each index (0-7)
+    ## pid_centroid_score.shape = #pids x |Q| 
+    ## [\max_w for each q]-> pointwise maximum over dim=1 for same pid (scatter op)
+    ### sim(D,Q) = \max_w sim(aug(D,w),aug(Q,w))
+    
+    ### doc_ids from each w (may) be different
+    ### using a scatter op
+    
+    
+    def _aggregate_over_indices(self,args, prune_candidates):
         ## what size?
         ## pids_i, scores_i ->  from i^th index (/8)
         ## max over scores to get pids
-        
+        ## doc_id D -> Dx|Q| (centroid scores) ->  
+        ## multiple centroid scores -> max over |Q| dim for the same doc_id
         ids, id_centroid_scores = zip(*args)
         id_lengths = [len(id) for id in ids]
         id_lengths_unique = [len(torch.unique(id)) for id in ids]
@@ -531,7 +542,10 @@ class ColBERT_internal(ColBERTAugmented):
         # unique_scores = scatter(
         #     id_centroid_scores, unique_indices, dim=0, dim_size=len(unique_ids), reduce="max"
         # )
-        ### USE SCATTER HERE WHEN PACKAGE INSTALLED
+        if not prune_candidates:
+            ## No need to prune candidates, so no need to compute the agg. score estimates
+            return unique_ids, id_centroid_scores
+        
         unique_scores = torch.full((len(unique_ids), id_centroid_scores.size(1)), float('-inf'), device=id_centroid_scores.device, dtype=id_centroid_scores.dtype)
         # print(unique_scores.dtype, unique_indices.dtype, id_centroid_scores.dtype)
         unique_scores = unique_scores.scatter_reduce(
@@ -560,24 +574,24 @@ class ColBERT_internal(ColBERTAugmented):
             
             with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
                 futures = [
-                executor.submit(candidate_worker_for_mp, i, self.config, qembs, k)
+                executor.submit(candidate_worker_for_mp, i, self.config, qembs, k, self.config.colbert_internal.prune_candidates)
                 for i in range(self.config.num_rh_augment)
                 ]
                 all_ids = [future.result() for future in concurrent.futures.as_completed(futures)]
         elif self.config.parallelization == "thread":
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = [
-                executor.submit(candidate_worker_for_th, self.searcher[i], qembs, k)
+                executor.submit(candidate_worker_for_th, self.searcher[i], qembs, k, self.config.colbert_internal.prune_candidates)
                 for i in range(self.config.num_rh_augment)
                 ]
                 all_ids = [future.result() for future in concurrent.futures.as_completed(futures)]
         elif self.config.parallelization == "none":
-            all_ids = [self.searcher[i].gen_candidates(qembs, k) for i in range(self.config.num_rh_augment)]
+            all_ids = [self.searcher[i].gen_candidates(qembs, k, self.config.colbert_internal.prune_candidates) for i in range(self.config.num_rh_augment)]
         else:
             raise ValueError(f"Unknown parallelization method: {self.config.parallelization}")
         return all_ids
         
-def candidate_worker_for_mp(i, config, qembs, k):
+def candidate_worker_for_mp(i, config, qembs, k, prune_candidates):
     with torch.inference_mode():
         # with Run().context(RunConfig(nranks=1, experiment=f"colbert_{config.data.dataset_name}")):
         with Run().context(RunConfig(nranks=1, experiment=f"{config.data.dataset_name}/{config.embedder.type}/{config.embedder.mv_type + ('_dblnorm' if config.dbl_norm else '_norm')}")):
@@ -595,11 +609,11 @@ def candidate_worker_for_mp(i, config, qembs, k):
                 checkpoint="/mnt/elk/data/kartikn/colbert/colbertv2.0",
                 index=f"nbits={config.colbert.nbits}.aug{config.num_rh_augment}.{i}",
                 config=colbert_config,
-            ).gen_candidates(qembs, k)
+            ).gen_candidates(qembs, k, prune_candidates)
             
-def candidate_worker_for_th(searcher:Searcher, qembs, k):
+def candidate_worker_for_th(searcher:Searcher, qembs, k, prune_candidates):
     with torch.inference_mode():
-        return searcher.gen_candidates(qembs, k)
+        return searcher.gen_candidates(qembs, k, prune_candidates)
   
 ################################################################################
 

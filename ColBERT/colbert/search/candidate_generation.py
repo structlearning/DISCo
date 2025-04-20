@@ -12,6 +12,11 @@ class CandidateGeneration:
     def get_cells(self, Q, ncells):
         # print(self.codec.centroids.shape, Q.shape)
         scores = (self.codec.centroids @ Q.T)
+        
+        ## centroid: n_centroids x d
+        ## Q : 32 x d
+        ## scores: n_centroids x 32 
+        
         if ncells == 1:
             cells = scores.argmax(dim=0, keepdim=True).permute(1, 0)
         else:
@@ -31,11 +36,13 @@ class CandidateGeneration:
 
     def generate_candidate_pids(self, Q, ncells, pid_centroid_scores=False):
         cells, scores = self.get_cells(Q, ncells)
-
+        # cell id = i, centroid score for this cell id = scores[i,:]
         pids, cell_lengths = self.ivf.lookup(cells)
+        ## for all docs in cell i -> surrogate score = scores[i,:]
+        # doc 1 doc2 (cell1) -> scores[1,:],scores[1,:]
         if self.use_gpu:
             pids = pids.cuda()
-        if pid_centroid_scores:
+        if pid_centroid_scores: ## my modification
             cell_lengths = cell_lengths.to(torch.long)
             indices = torch.repeat_interleave(torch.arange(len(cell_lengths), device=cell_lengths.device), cell_lengths)
             scores = scores[indices]

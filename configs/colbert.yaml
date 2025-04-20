@@ -30,8 +30,15 @@ colbert:
 
 # only valid for colbert_internal
 colbert_internal:
-  rerank_internal: True ## rerank on the colbert score
+  rerank_internal: False ## rerank on the colbert score
+  ## rerank_internal -> rerank on compressed embeddings, top-1 (reranking)
   rerank_external: True ## rerank by us on the external score
+
+  # internal False, external True -> get ncells -> all candidates (after w) -> return from colbert -> we do reranking
+  # internal True, external False -> get ncells -> all candidates (after w)-> use opt_vec to compute est.score on compressed embeddings : top-1 -> compute real score for that id to update opt_vec
+  # "double reranking" internal True, external True -> get ncells -> all candidates (after w) -> use opt_vec to compute est.score on compressed embeddings : top-b -> compute real score -> top-1
+
+  prune_candidates: False
 
 
 

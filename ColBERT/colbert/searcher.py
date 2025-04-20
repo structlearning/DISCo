@@ -92,7 +92,7 @@ class Searcher:
 
         return self._search_all_Q(queries, Q, k) 
         
-
+## original colbert
     def _search_all_Q(self, queries, Q, k, filter_fn=None, qid_to_pids=None):
         qids = list(queries.keys())
 
@@ -149,7 +149,7 @@ class Searcher:
 
         return pids[:k], list(range(1, k+1)), scores[:k]
 
-    def gen_candidates(self, Q: torch.Tensor, k=10):
+    def gen_candidates(self, Q: torch.Tensor, k=10, prune_candidates=False):
         if k <= 10:
             if self.config.ncells is None:
                 self.configure(ncells=1)
@@ -175,7 +175,7 @@ class Searcher:
         Q_aug = torch.nn.functional.normalize(Q_aug.squeeze(0), dim=-1, p=2) # NOTE: Candidate generation uses only the query tokens
         if self.ranker.use_gpu:
             Q_aug = Q_aug.cuda().half()
-        return self.ranker.generate_candidate_pids(Q_aug, self.config.ncells, pid_centroid_scores=True)
+        return self.ranker.generate_candidate_pids(Q_aug, self.config.ncells, pid_centroid_scores=prune_candidates)
         
 
     def rank_modified(self, Q, opt_vec, filter_fn=None, pids=None):
