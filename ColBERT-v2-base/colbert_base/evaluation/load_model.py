@@ -17,7 +17,7 @@ def load_model(args, do_print=True):
                                       dim=args.dim,
                                       similarity_metric=args.similarity,
                                       mask_punctuation=args.mask_punctuation)
-    colbert = colbert_base.to(DEVICE)
+    colbert = colbert.to(DEVICE)
 
     print_message("#> Loading model checkpoint.", condition=do_print)
 

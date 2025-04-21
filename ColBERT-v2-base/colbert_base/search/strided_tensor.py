@@ -43,11 +43,11 @@ class StridedTensor(StridedTensorCore):
 
         assert pids.dim() == 1
 
-        pids = pids.cuda().long()
-        lengths = self.lengths[pids].cuda()
-        offsets = self.offsets[pids]
+        pids = pids.long()
+        lengths = self.lengths[pids.to(self.lengths.device)].cuda()
+        offsets = self.offsets[pids.to(self.offsets.device)]
 
-        return pids, lengths, offsets
+        return pids.cuda(), lengths, offsets
 
     def lookup(self, pids, output='packed'):
         pids, lengths, offsets = self._prepare_lookup(pids)

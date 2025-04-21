@@ -30,7 +30,7 @@ class CandidateGeneration:
         eids = self.generate_candidate_eids(Q, nprobe)
         eids = torch.unique(eids, sorted=False)
 
-        pids = self.emb2pid[eids.long()].cuda()
+        pids = self.emb2pid[eids.cpu().long()].cuda()
         sorter = pids.sort()
         pids = sorter.values
 
@@ -102,7 +102,7 @@ class CandidateGeneration:
         
         eids = torch.unique(eids, sorted=False)
 
-        pids = self.emb2pid[eids.long()].cuda()
+        pids = self.emb2pid[eids.cpu().long()]
         
         if self.use_gpu:
             pids = pids.cuda()

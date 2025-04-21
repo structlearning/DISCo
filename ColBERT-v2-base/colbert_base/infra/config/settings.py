@@ -32,7 +32,7 @@ class RunSettings:
 
     @property
     def gpus_(self):
-        value = self.gpus
+        value = os.getenv("CUDA_VISIBLE_DEVICES", self.gpus)
 
         if isinstance(value, int):
             value = list(range(value))

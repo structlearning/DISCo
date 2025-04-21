@@ -21,8 +21,8 @@ class ResidualEmbeddingsStrided:
         self.residuals_strided = StridedTensor(self.residuals, doclens)
 
     def lookup_eids(self, embedding_ids, codes=None, out_device='cuda'):
-        codes = self.codes[embedding_ids] if codes is None else codes
-        residuals = self.residuals[embedding_ids]
+        codes = self.codes[embedding_ids.to(self.codes.device)] if codes is None else codes
+        residuals = self.residuals[embedding_ids.to(self.residuals.device)]
 
         return self.codec.decompress(residual_embeddings.ResidualEmbeddings(codes, residuals))
 
