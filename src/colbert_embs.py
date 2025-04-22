@@ -343,7 +343,10 @@ class ColBERTAugmented(ColBERTBaseE2E):
 
                 # KN TODO: save stats?
 
-                file_path = f"./colbert_ids_{self.config.data.dataset_name}_{i}.pkl"
+                if self.config.dbl_norm:
+                    file_path = f"./colbert_ids_dbl_norm/colbert_ids_{self.config.data.dataset_name}_{i}.pkl"
+                else:
+                    file_path = f"./colbert_ids_single_norm/colbert_ids_{self.config.data.dataset_name}_{i}.pkl"
                 print(file_path)
 
                 if os.path.exists(file_path):
@@ -390,6 +393,11 @@ class ColBERTAugmented(ColBERTBaseE2E):
                             (q_id * torch.ones(inds.shape[1], dtype=torch.long, device=corpus.device)),
                             torch.arange(inds.shape[1], dtype=torch.long, device=corpus.device)
                         ]
+                        # print(cemb.shape)
+                        # print(qembs[q_id].unsqueeze(0).shape)
+                        # print(optvec.unsqueeze(-1)[q_id].unsqueeze(0).shape)
+
+
                         # cembs.append(cemb)
                         # cmasks.append(cmask)
 

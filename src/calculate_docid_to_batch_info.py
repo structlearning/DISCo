@@ -2,9 +2,9 @@ import json
 import os
 import torch 
 
-BASE_DIR = "../experiments/trec-covid/BERT/corpus/"
+BASE_DIR = "../experiments/fever/BERT/corpus/"
 EMBEDDINGS_DIR = BASE_DIR + "compressed_128/"
-embeding_path = lambda folder,batch,minibatch : f"../experiments/trec-covid/BERT/corpus/{folder}/batch_{batch}.{minibatch}.pkl"
+embeding_path = lambda folder,batch,minibatch : f"../experiments/fever/BERT/corpus/{folder}/batch_{batch}.{minibatch}.pkl"
 
 with open(BASE_DIR+"status.json", 'r') as f:
     info_json = json.load(f)
@@ -29,5 +29,5 @@ for i in range(num_batches):
         torch.cuda.empty_cache()
 
 
-with open("../docid_to_batchinfo/docid_to_batchinfo_trec-covid.json", 'w') as f:
+with open("../docid_to_batchinfo/docid_to_batchinfo_fever.json", 'w') as f:
     json.dump(doc_id_to_batchinfo, f)

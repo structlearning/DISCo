@@ -31,7 +31,7 @@ def partial_chamfer_sim_batched_with_rerank(query, query_masks,running_optvec, m
     # ops to do: 
     
     # Move everything to CPU.
-    device = torch.device("cpu")
+    device = torch.device("cuda")
     
     query = query.to(device)
     query_masks = query_masks.to(device)
