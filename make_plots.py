@@ -33,25 +33,16 @@ def plot_b_vs_metric(dataset,k_values,b_values,norm_types:str|list=["norm","dbln
 
         baseline = f"pickles/results/greedy_base_0_128_k{15}_{data}_bf.pkl"
         
-        topk = f"pickles/results/BERT/colbertv2-plaid/norm_base_n2_d128_{data}_k15.pkl"
+        
         
         baseline_indices, baseline_scores = load_from_baseline(baseline)
         baseline_indices = [set(x.tolist()) for x in baseline_indices[:,:k]]
         baseline_scores = baseline_scores[:,k-1]
         
-        topk_indices, topk_scores = load_from_file(topk)
-        topk_indices = [set(x.tolist()) for x in topk_indices[:,:k]]
-        topk_scores = topk_scores[:,k-1]
         
-        topk_score_line = go.Scatter(
-            x=[0, 800], 
-            y=[topk_scores.mean().item(), topk_scores.mean().item()], 
-            mode='lines+text', 
-            name=f'Top-k', 
-            line=dict(color='blue', width=2, dash='dash'),
-            text=[f"{topk_scores.mean().item():.2f}", f"{topk_scores.mean().item():.2f}"],
-            textposition="top right"
-        )
+        score_figs = go.Figure()
+        jaccard_figs = go.Figure()
+        intersection_figs = go.Figure()
         
         baseline_score_line = go.Scatter(
             x=[0, 800], 
@@ -63,43 +54,63 @@ def plot_b_vs_metric(dataset,k_values,b_values,norm_types:str|list=["norm","dbln
             textposition="top right"
         )
         
-        # line for Jaccard similarity between topk and baseline
-        jaccard_similarity = np.mean([
-            len(baseline_indices[i].intersection(topk_indices[i])) / len(baseline_indices[i].union(topk_indices[i]))
-            for i in range(len(baseline_indices))
-        ])
-        jaccard_line = go.Scatter(
-            x=[0, 800],
-            y=[jaccard_similarity, jaccard_similarity],
-            mode='lines+text',
-            name=f'Jaccard Top-k vs S*{k}',
-            line=dict(color='green', width=2, dash='dot'),
-            text=[f"{jaccard_similarity:.2f}", f"{jaccard_similarity:.2f}"],
-            textposition="top right"
-        )
-
-        # line for intersection size between topk and baseline
-        intersection_size = np.mean([
-            len(baseline_indices[i].intersection(topk_indices[i]))
-            for i in range(len(baseline_indices))
-        ])
-        intersection_line = go.Scatter(
-            x=[0, 800],
-            y=[intersection_size, intersection_size],
-            mode='lines+text',
-            name=f'Intersection Top-k vs S*{k}',
-            line=dict(color='purple', width=2, dash='dot'),
-            text=[f"{intersection_size:.2f}", f"{intersection_size:.2f}"],
-            textposition="top right"
-        )   
+        for mvt in ['base','plaid']:
+            topk = f"pickles/results/BERT/colbertv2-{mvt}/norm_base_n2_d128_{data}_k15.pkl"
+            try:
+                topk_indices, topk_scores = load_from_file(topk)
+            except FileNotFoundError:
+                print(f"File not found: {topk}")
+                continue
+            topk_indices = [set(x.tolist()) for x in topk_indices[:,:k]]
+            topk_scores = topk_scores[:,k-1]
+            
+            topk_score_line = go.Scatter(
+                x=[0, 800], 
+                y=[topk_scores.mean().item(), topk_scores.mean().item()], 
+                mode='lines+text', 
+                name=f'{mvt}: Top-k', 
+                line=dict(color='blue', width=2, dash='dash'),
+                text=[f"{topk_scores.mean().item():.2f}", f"{topk_scores.mean().item():.2f}"],
+                textposition="top right"
+            )
+            score_figs.add_trace(topk_score_line)
+            
         
-        score_figs = go.Figure()
-        jaccard_figs = go.Figure()
-        intersection_figs = go.Figure()
-        jaccard_figs.add_trace(jaccard_line)
-        intersection_figs.add_trace(intersection_line)
-        score_figs.add_trace(baseline_score_line)
-        score_figs.add_trace(topk_score_line)
+            # line for Jaccard similarity between topk and baseline
+            jaccard_similarity = np.mean([
+                len(baseline_indices[i].intersection(topk_indices[i])) / len(baseline_indices[i].union(topk_indices[i]))
+                for i in range(len(baseline_indices))
+            ])
+            jaccard_line = go.Scatter(
+                x=[0, 800],
+                y=[jaccard_similarity, jaccard_similarity],
+                mode='lines+text',
+                name=f'{mvt}: Jaccard Top-k vs S*{k}',
+                line=dict(color='green', width=2, dash='dot'),
+                text=[f"{jaccard_similarity:.2f}", f"{jaccard_similarity:.2f}"],
+                textposition="top right"
+            )
+
+            # line for intersection size between topk and baseline
+            intersection_size = np.mean([
+                len(baseline_indices[i].intersection(topk_indices[i]))
+                for i in range(len(baseline_indices))
+            ])
+            intersection_line = go.Scatter(
+                x=[0, 800],
+                y=[intersection_size, intersection_size],
+                mode='lines+text',
+                name=f'{mvt}: Intersection Top-k vs S*{k}',
+                line=dict(color='purple', width=2, dash='dot'),
+                text=[f"{intersection_size:.2f}", f"{intersection_size:.2f}"],
+                textposition="top right"
+            )   
+            
+            
+            jaccard_figs.add_trace(jaccard_line)
+            intersection_figs.add_trace(intersection_line)
+            score_figs.add_trace(baseline_score_line)
+        
         
         # Add horizontal lines for greedy submodlib methods
         for method, color in zip(
@@ -181,7 +192,7 @@ def plot_b_vs_metric(dataset,k_values,b_values,norm_types:str|list=["norm","dbln
         
         for norm_type in norm_types:
             mean_threshold = get_threshold_est(b_values,dataset,norm_type)
-            tx = lambda t,b: f"pickles/results/BERT/colbertv2-plaid/{norm_type}_aug_n2_d128_rh8_threshold{t}_{data}_k15_rerankperh{b}.pkl"
+            tx = lambda t,b: f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_aug_n2_d128_rh8_threshold{t}_{data}_k15_rerankperh{b}.pkl"
             Variants=(1,)
             for t in Variants:
                 
@@ -263,7 +274,7 @@ def plot_k_vs_metric(dataset,k,bsizes=[10,25,50,100,200],norm_types:str|list=["n
     
     for norm_type in norm_types:
         for bsize in bsizes:
-            aug_inds, aug_scores = load(f"pickles/results/BERT/colbertv2-plaid/{norm_type}_aug_n2_d128_rh8_threshold1_{dataset}_k{k}_rerankperh{bsize}.pkl")
+            aug_inds, aug_scores = load(f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_aug_n2_d128_rh8_threshold1_{dataset}_k{k}_rerankperh{bsize}.pkl")
             score_plot.add_trace(
                 go.Scatter(
                     x=np.arange(1, len(aug_scores) + 1),
@@ -289,28 +300,72 @@ def plot_b_vs_metric_all(dataset):
     k_values=[5,10,15]
     for k in k_values:
         
+        score_figs = go.Figure()
+        jaccard_figs = go.Figure()
+        intersection_figs = go.Figure()
+        
 
         baseline = f"pickles/results/greedy_base_0_128_k{15}_{data}_bf.pkl"
         
-        topk = f"pickles/results/BERT/colbertv2-plaid/norm_base_n2_d128_{data}_k15.pkl"
         
         baseline_indices, baseline_scores = load_from_baseline(baseline)
         baseline_indices = [set(x.tolist()) for x in baseline_indices[:,:k]]
         baseline_scores = baseline_scores[:,k-1]
         
-        topk_indices, topk_scores = load_from_file(topk)
-        topk_indices = [set(x.tolist()) for x in topk_indices[:,:k]]
-        topk_scores = topk_scores[:,k-1]
-        
-        topk_score_line = go.Scatter(
-            x=[0, 200], 
-            y=[topk_scores.mean().item(), topk_scores.mean().item()], 
-            mode='lines+text', 
-            name=f'Top-k', 
-            line=dict(color='blue', width=2, dash='dash'),
-            text=[f"{topk_scores.mean().item():.2f}", f"{topk_scores.mean().item():.2f}"],
-            textposition="top right"
-        )
+        for mvt in ['base','plaid']:
+            topk = f"pickles/results/BERT/colbertv2-{mvt}/norm_base_n2_d128_{data}_k15.pkl"
+            try:
+                topk_indices, topk_scores = load_from_file(topk)
+            except FileNotFoundError:
+                print(f"File not found: {topk}")
+                continue
+            topk_indices = [set(x.tolist()) for x in topk_indices[:,:k]]
+            topk_scores = topk_scores[:,k-1]
+            
+            topk_score_line = go.Scatter(
+                x=[0, 200], 
+                y=[topk_scores.mean().item(), topk_scores.mean().item()], 
+                mode='lines+text', 
+                name=f'Top-k', 
+                line=dict(color='blue', width=2, dash='dash'),
+                text=[f"{topk_scores.mean().item():.2f}", f"{topk_scores.mean().item():.2f}"],
+                textposition="top right"
+            )
+            
+            # line for Jaccard similarity between topk and baseline
+            jaccard_similarity = np.mean([
+                len(baseline_indices[i].intersection(topk_indices[i])) / len(baseline_indices[i].union(topk_indices[i]))
+                for i in range(len(baseline_indices))
+            ])
+            jaccard_line = go.Scatter(
+                x=[0, 200],
+                y=[jaccard_similarity, jaccard_similarity],
+                mode='lines+text',
+                name=f'Jaccard Top-k vs S*{k}',
+                line=dict(color='green', width=2, dash='dot'),
+                text=[f"{jaccard_similarity:.2f}", f"{jaccard_similarity:.2f}"],
+                textposition="top right"
+            )
+
+            # line for intersection size between topk and baseline
+            intersection_size = np.mean([
+                len(baseline_indices[i].intersection(topk_indices[i]))
+                for i in range(len(baseline_indices))
+            ])
+            intersection_line = go.Scatter(
+                x=[0, 200],
+                y=[intersection_size, intersection_size],
+                mode='lines+text',
+                name=f'Intersection Top-k vs S*{k}',
+                line=dict(color='purple', width=2, dash='dot'),
+                text=[f"{intersection_size:.2f}", f"{intersection_size:.2f}"],
+                textposition="top right"
+            )   
+            
+            
+            jaccard_figs.add_trace(jaccard_line)
+            intersection_figs.add_trace(intersection_line)
+            score_figs.add_trace(topk_score_line)
         
         baseline_score_line = go.Scatter(
             x=[0, 200], 
@@ -321,44 +376,8 @@ def plot_b_vs_metric_all(dataset):
             text=[f"{baseline_scores.mean().item():.2f}", f"{baseline_scores.mean().item():.2f}"],
             textposition="top right"
         )
-        
-        # line for Jaccard similarity between topk and baseline
-        jaccard_similarity = np.mean([
-            len(baseline_indices[i].intersection(topk_indices[i])) / len(baseline_indices[i].union(topk_indices[i]))
-            for i in range(len(baseline_indices))
-        ])
-        jaccard_line = go.Scatter(
-            x=[0, 200],
-            y=[jaccard_similarity, jaccard_similarity],
-            mode='lines+text',
-            name=f'Jaccard Top-k vs S*{k}',
-            line=dict(color='green', width=2, dash='dot'),
-            text=[f"{jaccard_similarity:.2f}", f"{jaccard_similarity:.2f}"],
-            textposition="top right"
-        )
-
-        # line for intersection size between topk and baseline
-        intersection_size = np.mean([
-            len(baseline_indices[i].intersection(topk_indices[i]))
-            for i in range(len(baseline_indices))
-        ])
-        intersection_line = go.Scatter(
-            x=[0, 200],
-            y=[intersection_size, intersection_size],
-            mode='lines+text',
-            name=f'Intersection Top-k vs S*{k}',
-            line=dict(color='purple', width=2, dash='dot'),
-            text=[f"{intersection_size:.2f}", f"{intersection_size:.2f}"],
-            textposition="top right"
-        )   
-        
-        score_figs = go.Figure()
-        jaccard_figs = go.Figure()
-        intersection_figs = go.Figure()
-        jaccard_figs.add_trace(jaccard_line)
-        intersection_figs.add_trace(intersection_line)
         score_figs.add_trace(baseline_score_line)
-        score_figs.add_trace(topk_score_line)
+        
         
         # Add horizontal lines for greedy submodlib methods
         for method, color in zip(
@@ -417,125 +436,109 @@ def plot_b_vs_metric_all(dataset):
             intersection_figs.add_trace(submodlib_intersection_line)
 
         
-        
-        for norm_type in norm_types:
-            tx = lambda t,b: f"pickles/results/BERT/colbertv2-plaid/{norm_type}_aug_n2_d128_rh8_threshold{t}_{data}_k15_rerankperh{b}.pkl"
-            t=1
-                
-            y_val = []
-            y_jac = []
-            y_int = []
-            b_values_real = []
-            for b in b_values:
-                try:
-                    tx_ind, tx_scores = load_from_file(tx(t,b))
-                except FileNotFoundError:
-                    continue
-                tx_ind = [set(x.tolist()) for x in tx_ind[:,:k]]
-                tx_scores = tx_scores[:,k-1]
-                y_val.append(tx_scores.mean().item())
-                y_jac.append(np.mean([len(baseline_indices[i].intersection(tx_ind[i]))/len(baseline_indices[i].union(tx_ind[i])) for i in range(len(baseline_indices))]))
-                y_int.append(np.mean([len(baseline_indices[i].intersection(tx_ind[i])) for i in range(len(baseline_indices))]))
-                b_values_real.append(b)
-                
-                
-            x_axis = b_values_real
-            score_figs.add_trace(go.Scatter(x=x_axis, y=y_val, mode='lines+markers', name=f"Aug - {norm_type}"))
-            jaccard_figs.add_trace(go.Scatter(x=x_axis, y=y_jac, mode='lines+markers', name=f"Aug - {norm_type}"))
-            intersection_figs.add_trace(go.Scatter(x=x_axis, y=y_int, mode='lines+markers', name=f"Aug - {norm_type}"))
-                
-        
-        # opt 1: double rerank
-        # opt 2: only colbert's rerank with compressed score
-        # opt 3: only our rerank with exact score
-        for norm_type in norm_types:
-            opt1 = lambda b: f"pickles/results/BERT/colbertv2-plaid/{norm_type}_int_n2_d128_rh8_intTrue_extTrue_{dataset}_k15_rerankperh{b}.pkl"
-            opt2 = lambda b: f"pickles/results/BERT/colbertv2-plaid/{norm_type}_int_n2_d128_rh8_intTrue_extFalse_{dataset}_k15_rerankperh{b}.pkl"
-            opt3 = lambda b: f"pickles/results/BERT/colbertv2-plaid/{norm_type}_int_n2_d128_rh8_intFalse_extTrue_{dataset}_k15_rerankperh{b}.pkl"
-            
-            y_val_opt1 = []
-            y_val_opt2 = []
-            y_val_opt3 = []
-            y_jac_opt1 = []
-            y_jac_opt2 = []
-            y_jac_opt3 = []
-            y_int_opt1 = []
-            y_int_opt2 = []
-            y_int_opt3 = []
-            
-            b_values_real = []
-            for b in b_values:
-                try:
-                    # Load data for opt1
-                    opt1_ind, opt1_scores = load_from_file(opt1(b))
-                    opt1_ind = [set(x.tolist()) for x in opt1_ind[:, :k]]
-                    opt1_scores = opt1_scores[:, k - 1]
-                    y_val_opt1.append(opt1_scores.mean().item())
-                    y_jac_opt1.append(np.mean([len(baseline_indices[i].intersection(opt1_ind[i])) / len(baseline_indices[i].union(opt1_ind[i])) for i in range(len(baseline_indices))]))
-                    y_int_opt1.append(np.mean([len(baseline_indices[i].intersection(opt1_ind[i])) for i in range(len(baseline_indices))]))
-                    b_values_real.append(b)
-                except FileNotFoundError:
-                    print(f"File not found: {opt1(b)}")
-                    continue
-            # Add curves for opt1
-            score_figs.add_trace(go.Scatter(x=b_values_real, y=y_val_opt1, mode='lines+markers', name=f"Opt1: two reranks - {norm_type}"))
-            jaccard_figs.add_trace(go.Scatter(x=b_values_real, y=y_jac_opt1, mode='lines+markers', name=f"Opt1: two reranks - {norm_type}"))
-            intersection_figs.add_trace(go.Scatter(x=b_values_real, y=y_int_opt1, mode='lines+markers', name=f"Opt1: two reranks - {norm_type}"))
-                
-            b_values_real = []
-            for b in b_values:    
-                try:    
-                    # Load data for opt2
-                    opt2_ind, opt2_scores = load_from_file(opt2(b))
-                    opt2_ind = [set(x.tolist()) for x in opt2_ind[:, :k]]
-                    opt2_scores = opt2_scores[:, k - 1]
-                    y_val_opt2.append(opt2_scores.mean().item())
-                    y_jac_opt2.append(np.mean([len(baseline_indices[i].intersection(opt2_ind[i])) / len(baseline_indices[i].union(opt2_ind[i])) for i in range(len(baseline_indices))]))
-                    y_int_opt2.append(np.mean([len(baseline_indices[i].intersection(opt2_ind[i])) for i in range(len(baseline_indices))]))
-                    b_values_real.append(b)
-                except FileNotFoundError:
-                    print(f"File not found: {opt2(b)}")
-                    continue 
-            # Add curves for opt2
-            score_figs.add_trace(go.Scatter(x=b_values_real, y=y_val_opt1, mode='lines+markers', name=f"Opt2: colbert rerank - {norm_type}"))
-            jaccard_figs.add_trace(go.Scatter(x=b_values_real, y=y_jac_opt1, mode='lines+markers', name=f"Opt2: colbert rerank - {norm_type}"))
-            intersection_figs.add_trace(go.Scatter(x=b_values_real, y=y_int_opt1, mode='lines+markers', name=f"Opt2: colbert rerank - {norm_type}"))
-                
-            b_values_real = []   
-            for b in b_values:    
-                try:    
-                    # Load data for opt3
-                    opt3_ind, opt3_scores = load_from_file(opt3(b))
-                    opt3_ind = [set(x.tolist()) for x in opt3_ind[:, :k]]
-                    opt3_scores = opt3_scores[:, k - 1]
-                    y_val_opt3.append(opt3_scores.mean().item())
-                    y_jac_opt3.append(np.mean([len(baseline_indices[i].intersection(opt3_ind[i])) / len(baseline_indices[i].union(opt3_ind[i])) for i in range(len(baseline_indices))]))
-                    y_int_opt3.append(np.mean([len(baseline_indices[i].intersection(opt3_ind[i])) for i in range(len(baseline_indices))]))
+        for mvt in ['base','plaid']:
+            for norm_type in norm_types:
+                tx = lambda t,b: f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_aug_n2_d128_rh8_threshold{t}_{data}_k15_rerankperh{b}.pkl"
+                t=1
                     
+                y_val = []
+                y_jac = []
+                y_int = []
+                b_values_real = []
+                for b in b_values:
+                    try:
+                        tx_ind, tx_scores = load_from_file(tx(t,b))
+                    except FileNotFoundError:
+                        continue
+                    tx_ind = [set(x.tolist()) for x in tx_ind[:,:k]]
+                    tx_scores = tx_scores[:,k-1]
+                    y_val.append(tx_scores.mean().item())
+                    y_jac.append(np.mean([len(baseline_indices[i].intersection(tx_ind[i]))/len(baseline_indices[i].union(tx_ind[i])) for i in range(len(baseline_indices))]))
+                    y_int.append(np.mean([len(baseline_indices[i].intersection(tx_ind[i])) for i in range(len(baseline_indices))]))
                     b_values_real.append(b)
-                except FileNotFoundError:
-                    continue            
-            # Add curves for opt3
-            score_figs.add_trace(go.Scatter(x=b_values_real, y=y_val_opt3, mode='lines+markers', name=f"Opt3: exact rerank - {norm_type}"))
-            jaccard_figs.add_trace(go.Scatter(x=b_values_real, y=y_jac_opt3, mode='lines+markers', name=f"Opt3: exact rerank - {norm_type}"))
-            intersection_figs.add_trace(go.Scatter(x=b_values_real, y=y_int_opt3, mode='lines+markers', name=f"Opt3: exact rerank - {norm_type}"))
+                    
+                    
+                x_axis = b_values_real
+                score_figs.add_trace(go.Scatter(x=x_axis, y=y_val, mode='lines+markers', name=f"Aug {mvt} - {norm_type}"))
+                jaccard_figs.add_trace(go.Scatter(x=x_axis, y=y_jac, mode='lines+markers', name=f"Aug {mvt}- {norm_type}"))
+                intersection_figs.add_trace(go.Scatter(x=x_axis, y=y_int, mode='lines+markers', name=f"Aug {mvt}- {norm_type}"))
+                    
             
-            # # Add horizontal line for opt2 with b=100
-            # try:
-            #     opt2_ind, opt2_scores = load_from_file(opt2(100))
-            #     opt2_scores = opt2_scores[:, k - 1]
-            #     opt2_mean_score = opt2_scores.mean().item()
-            #     score_figs.add_trace(go.Scatter(
-            #         x=[0, 800],
-            #         y=[opt2_mean_score, opt2_mean_score],
-            #         mode='lines+text',
-            #         name=f"Opt2: internal rerank - {norm_type} (top-1))",
-            #         line=dict(color='cyan', width=2, dash='dash'),
-            #         text=[f"{opt2_mean_score:.2f}", f"{opt2_mean_score:.2f}"],
-            #         textposition="top right"
-            #     ))
-            # except FileNotFoundError:
-            #     continue
+            # opt 1: double rerank
+            # opt 2: only colbert's rerank with compressed score
+            # opt 3: only our rerank with exact score
+            for norm_type in norm_types:
+                opt1 = lambda b: f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_int_n2_d128_rh8_intTrue_extTrue_{dataset}_k15_rerankperh{b}.pkl"
+                opt2 = lambda b: f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_int_n2_d128_rh8_intTrue_extFalse_{dataset}_k15_rerankperh{b}.pkl"
+                opt3 = lambda b: f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_int_n2_d128_rh8_intFalse_extTrue_{dataset}_k15_rerankperh{b}.pkl"
+                
+                y_val_opt1 = []
+                y_val_opt2 = []
+                y_val_opt3 = []
+                y_jac_opt1 = []
+                y_jac_opt2 = []
+                y_jac_opt3 = []
+                y_int_opt1 = []
+                y_int_opt2 = []
+                y_int_opt3 = []
+                
+                b_values_real = []
+                for b in b_values:
+                    try:
+                        # Load data for opt1
+                        opt1_ind, opt1_scores = load_from_file(opt1(b))
+                        opt1_ind = [set(x.tolist()) for x in opt1_ind[:, :k]]
+                        opt1_scores = opt1_scores[:, k - 1]
+                        y_val_opt1.append(opt1_scores.mean().item())
+                        y_jac_opt1.append(np.mean([len(baseline_indices[i].intersection(opt1_ind[i])) / len(baseline_indices[i].union(opt1_ind[i])) for i in range(len(baseline_indices))]))
+                        y_int_opt1.append(np.mean([len(baseline_indices[i].intersection(opt1_ind[i])) for i in range(len(baseline_indices))]))
+                        b_values_real.append(b)
+                    except FileNotFoundError:
+                        print(f"File not found: {opt1(b)}")
+                        continue
+                # Add curves for opt1
+                score_figs.add_trace(go.Scatter(x=b_values_real, y=y_val_opt1, mode='lines+markers', name=f"{mvt} Opt1: two reranks - {norm_type}"))
+                jaccard_figs.add_trace(go.Scatter(x=b_values_real, y=y_jac_opt1, mode='lines+markers', name=f"{mvt} Opt1: two reranks - {norm_type}"))
+                intersection_figs.add_trace(go.Scatter(x=b_values_real, y=y_int_opt1, mode='lines+markers', name=f"{mvt} Opt1: two reranks - {norm_type}"))
+                    
+                b_values_real = []
+                for b in b_values:    
+                    try:    
+                        # Load data for opt2
+                        opt2_ind, opt2_scores = load_from_file(opt2(b))
+                        opt2_ind = [set(x.tolist()) for x in opt2_ind[:, :k]]
+                        opt2_scores = opt2_scores[:, k - 1]
+                        y_val_opt2.append(opt2_scores.mean().item())
+                        y_jac_opt2.append(np.mean([len(baseline_indices[i].intersection(opt2_ind[i])) / len(baseline_indices[i].union(opt2_ind[i])) for i in range(len(baseline_indices))]))
+                        y_int_opt2.append(np.mean([len(baseline_indices[i].intersection(opt2_ind[i])) for i in range(len(baseline_indices))]))
+                        b_values_real.append(b)
+                    except FileNotFoundError:
+                        print(f"File not found: {opt2(b)}")
+                        continue 
+                # Add curves for opt2
+                score_figs.add_trace(go.Scatter(x=b_values_real, y=y_val_opt1, mode='lines+markers', name=f"{mvt} Opt2: colbert rerank - {norm_type}"))
+                jaccard_figs.add_trace(go.Scatter(x=b_values_real, y=y_jac_opt1, mode='lines+markers', name=f"{mvt} Opt2: colbert rerank - {norm_type}"))
+                intersection_figs.add_trace(go.Scatter(x=b_values_real, y=y_int_opt1, mode='lines+markers', name=f"{mvt} Opt2: colbert rerank - {norm_type}"))
+                    
+                b_values_real = []   
+                for b in b_values:    
+                    try:    
+                        # Load data for opt3
+                        opt3_ind, opt3_scores = load_from_file(opt3(b))
+                        opt3_ind = [set(x.tolist()) for x in opt3_ind[:, :k]]
+                        opt3_scores = opt3_scores[:, k - 1]
+                        y_val_opt3.append(opt3_scores.mean().item())
+                        y_jac_opt3.append(np.mean([len(baseline_indices[i].intersection(opt3_ind[i])) / len(baseline_indices[i].union(opt3_ind[i])) for i in range(len(baseline_indices))]))
+                        y_int_opt3.append(np.mean([len(baseline_indices[i].intersection(opt3_ind[i])) for i in range(len(baseline_indices))]))
+                        
+                        b_values_real.append(b)
+                    except FileNotFoundError:
+                        continue            
+                # Add curves for opt3
+                score_figs.add_trace(go.Scatter(x=b_values_real, y=y_val_opt3, mode='lines+markers', name=f"{mvt} Opt3: exact rerank - {norm_type}"))
+                jaccard_figs.add_trace(go.Scatter(x=b_values_real, y=y_jac_opt3, mode='lines+markers', name=f"{mvt} Opt3: exact rerank - {norm_type}"))
+                intersection_figs.add_trace(go.Scatter(x=b_values_real, y=y_int_opt3, mode='lines+markers', name=f"{mvt} Opt3: exact rerank - {norm_type}"))
+              
             
                 
         score_figs.update_layout(

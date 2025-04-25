@@ -90,8 +90,7 @@ class CandidateGeneration:
         return pids
 
 
-    def generate_candidate_pids(self, Q, ncells, pid_centroid_scores=False):
-        nprobe = ncells
+    def generate_candidate_pids(self, Q, nprobe, pid_centroid_scores=False):
         assert pid_centroid_scores == False, "this function should not be called by normal search"
         
         cells = (self.codec.centroids @ Q.T).topk(nprobe, dim=0, sorted=False).indices.permute(1, 0)  # (32, nprobe)
@@ -104,10 +103,7 @@ class CandidateGeneration:
 
         pids = self.emb2pid[eids.cpu().long()]
         
-        if self.use_gpu:
+        if True : #self.use_gpu:
             pids = pids.cuda()
-        if pid_centroid_scores: ## my modification
-            cell_lengths = cell_lengths.to(torch.long)
-            indices = torch.repeat_interleave(torch.arange(len(cell_lengths), device=cell_lengths.device), cell_lengths)
-            scores = scores[indices]
-        return pids, scores
+        
+        return pids, None

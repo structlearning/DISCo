@@ -101,9 +101,9 @@ class Searcher:
     def gen_candidates(self, Q: torch.Tensor, k=10, prune_candidates=False):
         Q_aug = self.checkpoint._RH_augmentation_query(Q[:, :self.config.query_maxlen])
         Q_aug = torch.nn.functional.normalize(Q_aug.squeeze(0), dim=-1, p=2) # NOTE: Candidate generation uses only the query tokens
-        if self.ranker.use_gpu:
+        if True: # self.ranker.use_gpu:
             Q_aug = Q_aug.cuda().half()
-        return self.ranker.generate_candidate_pids(Q_aug, self.config.ncells, pid_centroid_scores=prune_candidates)
+        return self.ranker.generate_candidate_pids(Q_aug, self.config.nprobe, pid_centroid_scores=prune_candidates)
     
     ## TODO: modified
     def rank_modified(self, Q, opt_vec, filter_fn=None, pids=None):
@@ -113,7 +113,7 @@ class Searcher:
             pids = torch.tensor(pids, dtype=torch.int32, device=Q.device)
             centroid_scores = None
 
-            scores, pids = self.ranker.score_pids_modified(self.config, Q, pids, centroid_scores,opt_vec)
+            scores = self.ranker.score_pids_modified(self.config, Q, pids, centroid_scores,opt_vec)
 
             scores_sorter = scores.sort(descending=True)
             pids, scores = pids[scores_sorter.indices].tolist(), scores_sorter.values.tolist()

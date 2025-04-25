@@ -532,7 +532,6 @@ class ColBERT_internal(ColBERTAugmented):
         id_lengths = [len(id) for id in ids]
         id_lengths_unique = [len(torch.unique(id)) for id in ids]
         ids = torch.cat(ids, dim=0)
-        id_centroid_scores = torch.cat(id_centroid_scores, dim=0)
         # max aggregate over ids
         unique_ids, unique_indices = torch.unique(ids, return_inverse=True)
         # unique_scores = scatter(
@@ -541,6 +540,8 @@ class ColBERT_internal(ColBERTAugmented):
         if not prune_candidates:
             ## No need to prune candidates, so no need to compute the agg. score estimates
             return unique_ids, id_centroid_scores
+        
+        id_centroid_scores = torch.cat(id_centroid_scores, dim=0)
         
         unique_scores = torch.full((len(unique_ids), id_centroid_scores.size(1)), float('-inf'), device=id_centroid_scores.device, dtype=id_centroid_scores.dtype)
         # print(unique_scores.dtype, unique_indices.dtype, id_centroid_scores.dtype)
