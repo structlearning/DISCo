@@ -153,6 +153,7 @@ class IndexScorer(IndexLoader, CandidateGeneration):
 
                 # Filter docs using full centroid scores
                 codes_packed, codes_lengths = self.embeddings_strided.lookup_codes(pids)
+                
                 approx_scores = centroid_scores[codes_packed.long()]
                 approx_scores_strided = StridedTensor(approx_scores, codes_lengths, use_gpu=self.use_gpu)
                 approx_scores_padded, approx_scores_mask = approx_scores_strided.as_padded_tensor()

@@ -12,6 +12,8 @@ from tqdm import tqdm
 
 from colbert.infra import Run, RunConfig, ColBERTConfig
 from colbert import Indexer, Searcher
+from colbert.modeling.colbert import colbert_score_reduce
+from colbert.search.strided_tensor import StridedTensor
 
 # from torch_scatter import scatter
 
@@ -593,19 +595,19 @@ class ColBERT_internal(ColBERTAugmented):
         ## max over scores to get pids
         ## doc_id D -> Dx|Q| (centroid scores) ->  
         ## multiple centroid scores -> max over |Q| dim for the same doc_id
-        ids, id_centroid_scores = zip(*args)
-        id_lengths = [len(id) for id in ids]
-        id_lengths_unique = [len(torch.unique(id)) for id in ids]
+        ids, id_centroid_scores, codes_lengths = zip(*args)
         ids = torch.cat(ids, dim=0)
         id_centroid_scores = torch.cat(id_centroid_scores, dim=0)
+        codes_lengths = torch.cat(codes_lengths, dim=0)
         # max aggregate over ids
         unique_ids, unique_indices = torch.unique(ids, return_inverse=True)
-        # unique_scores = scatter(
-        #     id_centroid_scores, unique_indices, dim=0, dim_size=len(unique_ids), reduce="max"
-        # )
+        
         if not prune_candidates:
             ## No need to prune candidates, so no need to compute the agg. score estimates
             return unique_ids, id_centroid_scores
+        
+        codes_lengths_reduced = torch.empty_like(unique_ids)
+        codes_lengths_reduced[unique_ids] = codes_lengths ## pytorch not being thread safe saves the day
         
         unique_scores = torch.full((len(unique_ids), id_centroid_scores.size(1)), float('-inf'), device=id_centroid_scores.device, dtype=id_centroid_scores.dtype)
         # print(unique_scores.dtype, unique_indices.dtype, id_centroid_scores.dtype)
@@ -616,15 +618,18 @@ class ColBERT_internal(ColBERTAugmented):
             reduce='amax',
             include_self=False
         ).float()
-        # pick average over id lengths?
-        k_for_topk = sum(id_lengths_unique)//len(id_lengths_unique) ## TODO:decide
         
-        _, topk_indices = torch.topk(unique_scores.sum(dim=1), k_for_topk)
-        topk_ids = unique_ids[topk_indices]
-        topk_scores = unique_scores[topk_indices]
+        approx_scores_strided = StridedTensor(unique_scores, codes_lengths_reduced, use_gpu=True)
+        approx_scores_padded, approx_scores_mask = approx_scores_strided.as_padded_tensor()
+        approx_scores = colbert_score_reduce(approx_scores_padded, approx_scores_mask, config)
+        # pick average over id lengths?
+        threshold_ndocs = config.ndocs//4 ## TODO:decide
+        
+        if threshold_ndocs < len(approx_scores):
+            pids = pids[torch.topk(approx_scores, k=threshold_ndocs).indices]
         # from IPython import embed; embed()
         
-        return topk_ids, topk_scores
+        return pids, None # here the scores are not important - you should change the signature of the function rtype, and everywhere ahead
     
         
     

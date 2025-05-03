@@ -169,8 +169,9 @@ class ColBERT(BaseColBERT):
                 assert os.path.exists(filename)
                 self.RH = torch.load(filename)
                 
-                
-        reflect = ((embs @ self.RH) >0).to(embs.dtype).unsqueeze(-1)*embs
+        signs = torch.sign(embs @ self.RH)
+        signs[signs == 0] = 1
+        reflect = signs.unsqueeze(-1)*embs
         embs = torch.cat([embs, reflect], dim=-1)
         return embs
 
@@ -198,7 +199,9 @@ class ColBERT(BaseColBERT):
                 self.RH = torch.load(filename)
                 
                 
-        reflect = ((embs @ self.RH) >0).to(embs.dtype).unsqueeze(-1)*embs
+        signs = torch.sign(embs @ self.RH)
+        signs[signs == 0] = 1
+        reflect = signs.unsqueeze(-1)*embs
         embs = torch.cat([embs, reflect], dim=-1)
         return embs
     
