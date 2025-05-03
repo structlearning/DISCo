@@ -200,12 +200,29 @@ class ColBERTBaseline(ColBERTBaseE2E):
         result_ids = self.search(qembs, qmasks, k=self.config.k)
         print(f"result ids shape : {result_ids.shape}")
         
-        ## compute real scores with opts
-        cembs, cmasks = self.embedder.get_corpus(result_ids)
+        if self.config.embedder.mode =="mem":
+            ## compute real scores with opts
+            cembs, cmasks = self.embedder.get_corpus(result_ids)
+        else:
+            corpus = self.embedder.get_corpus(result_ids)
+            logger.info("All required documents are loaded")
+            cembs = []
+            cmasks = []
+            for q_id in tqdm(range(qembs.shape[0]), desc="Processing queries"):
+                cemb, cmask = corpus[
+                    (q_id * torch.ones(result_ids.shape[1], dtype=torch.long, device=corpus.device)),
+                    torch.arange(result_ids.shape[1], dtype=torch.long, device=corpus.device)
+                ]
+
+                cembs.append(cemb)
+                cmasks.append(cmask)
+            cembs = torch.stack(cembs)
+            cmasks = torch.stack(cmasks)
         
+        # Common code to disk and mem mode
         ## qembs: 300,64,128, qmasks: 300,64
         ## cembs: 300,100,330,128, cmasks: 300,100,330
-        
+
         ## qembs is already masked out, and zeroed out
         dp = torch.einsum("abc,adec->adbe",qembs,cembs.to(qembs.device))
         masked = torch.where(cmasks.bool().to(qembs.device).unsqueeze(2),dp,-10)
@@ -214,6 +231,7 @@ class ColBERTBaseline(ColBERTBaseE2E):
         
         save((result_ids, result_scores), result_file_path)
         return result_ids, result_scores
+
 
 ## Picks a larger top-b ( colbert_topk ) then performs a greedy marginal gain search in the top-b
 
@@ -396,13 +414,6 @@ class ColBERTAugmented(ColBERTBaseE2E):
                             (q_id * torch.ones(inds.shape[1], dtype=torch.long, device=corpus.device)),
                             torch.arange(inds.shape[1], dtype=torch.long, device=corpus.device)
                         ]
-                        # print(cemb.shape)
-                        # print(qembs[q_id].unsqueeze(0).shape)
-                        # print(optvec.unsqueeze(-1)[q_id].unsqueeze(0).shape)
-
-
-                        # cembs.append(cemb)
-                        # cmasks.append(cmask)
 
                         max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
                             qembs[q_id].unsqueeze(0), qmasks[q_id].unsqueeze(0), optvec.unsqueeze(-1)[q_id].unsqueeze(0), cemb.unsqueeze(0), cmask.unsqueeze(0)
