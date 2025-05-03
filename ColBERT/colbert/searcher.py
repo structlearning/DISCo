@@ -182,7 +182,7 @@ class Searcher:
         pids,centroid_scores = self.ranker.generate_candidate_pids(Q_aug, self.config.ncells)
         
         if not prune_candidates:
-            return pids, centroid_scores
+            return pids, centroid_scores, None
         
         ### the following is picked up from score_pids in search/index_storage.py
         batch_size = 2 ** 20
