@@ -535,7 +535,24 @@ class ColBERT_internal(ColBERTAugmented):
                 # KN TODO: save stats?
                 # save(inds,"debug_inds.pkl")
                 logger.info(f"Search Done - iter {i+1}/{self.config.k}")
-                cembs, cmasks = self.embedder.get_corpus(inds)
+        
+                if self.config.embedder.mode=="mem":
+                    cembs, cmasks = self.embedder.get_corpus(inds)
+                else:
+                    corpus = self.embedder.get_corpus(inds)
+                    logger.info("All required documents are loaded")
+                    cembs = []
+                    cmasks = []
+                    for q_id in tqdm(range(qembs.shape[0]), desc="Processing queries"):
+                        cemb, cmask = corpus[
+                            (q_id * torch.ones(inds.shape[1], dtype=torch.long, device=corpus.device)),
+                            torch.arange(inds.shape[1], dtype=torch.long, device=corpus.device)
+                        ]
+
+                        cembs.append(cemb)
+                        cmasks.append(cmask)
+                    cembs = torch.stack(cembs)
+                    cmasks = torch.stack(cmasks)
                 
                 max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
                     qembs, qmasks, optvec.unsqueeze(-1), cembs, cmasks
@@ -603,44 +620,49 @@ class ColBERT_internal(ColBERTAugmented):
     def _aggregate_over_indices(self,args, prune_candidates):
         ## what size?
         ## pids_i, scores_i ->  from i^th index (/8)
-        ## max over scores to get pids
-        ## doc_id D -> Dx|Q| (centroid scores) ->  
-        ## multiple centroid scores -> max over |Q| dim for the same doc_id
+        ## we bring centroid scores to the same place, so that colbert_score_reduce can be used
+        ## then we can threshold based on this score
+        
         ids, id_centroid_scores, codes_lengths = zip(*args)
         ids = torch.cat(ids, dim=0)
         id_centroid_scores = torch.cat(id_centroid_scores, dim=0)
         
-        # max aggregate over ids
-        unique_ids, unique_indices = torch.unique(ids, return_inverse=True)
+        argsort_for_ids = torch.argsort(ids, dim=0)
+        sorted_ids = ids[argsort_for_ids]
+        
+        unique_ids, inverse_unique, counts = torch.unique(sorted_ids, return_inverse=True, return_counts=True) # should use unique_consecutive perhaps
+        
         logger.info(f"Unique ids: {unique_ids.size(0)}")
         if not prune_candidates:
             ## No need to prune candidates, so no need to compute the agg. score estimates
             return unique_ids, id_centroid_scores
         
-        codes_lengths = torch.cat(codes_lengths, dim=0)
-        codes_lengths_reduced = torch.empty_like(unique_ids)
-        codes_lengths_reduced[unique_ids] = codes_lengths 
+        codes_lengths = torch.cat(codes_lengths, dim=0).to(self.device)
+        new_code_lengths = codes_lengths[argsort_for_ids]
+        cum_code_lengths = torch.cumsum(codes_lengths, dim=0)
+        sorted_cum_code_lengths = torch.cumsum(new_code_lengths, dim=0)       
         
-        unique_scores = torch.full((len(unique_ids), id_centroid_scores.size(1)), float('-inf'), device=id_centroid_scores.device, dtype=id_centroid_scores.dtype)
-        # print(unique_scores.dtype, unique_indices.dtype, id_centroid_scores.dtype)
-        unique_scores = unique_scores.scatter_reduce(
-            dim=0,
-            index=unique_indices.unsqueeze(1).expand(-1, id_centroid_scores.size(1)),
-            src=id_centroid_scores,
-            reduce='amax',
-            include_self=False
-        ).float()
+        aggregated_code_lengths = torch.zeros_like(unique_ids, dtype=new_code_lengths.dtype)
+        aggregated_code_lengths.scatter_add_(0, inverse_unique, new_code_lengths)
         
-        approx_scores_strided = StridedTensor(unique_scores, codes_lengths_reduced, use_gpu=True)
+            
+        all_scores = torch.empty_like(id_centroid_scores)
+        for i,new_cum in enumerate(sorted_cum_code_lengths): ## TODO: Good tensorisation?
+            length = new_code_lengths[i].item()
+            all_scores[new_cum-length:new_cum] = id_centroid_scores[cum_code_lengths[argsort_for_ids[i]]-length:cum_code_lengths[argsort_for_ids[i]]]
+        
+        approx_scores_strided = StridedTensor(all_scores, aggregated_code_lengths, use_gpu=True)
         approx_scores_padded, approx_scores_mask = approx_scores_strided.as_padded_tensor()
-        approx_scores = colbert_score_reduce(approx_scores_padded, approx_scores_mask, config)
+        approx_scores = colbert_score_reduce(approx_scores_padded, approx_scores_mask,self.searcher[0].config)
         # pick average over id lengths?
-        threshold_ndocs = config.ndocs//4 ## TODO:decide
+        ## For now we heuristically go for something similar to the other colbert modification
+        threshold_ndocs = config.colbert_topk*config.num_rh_augment #config.ndocs//4 ## TODO:decide/CLEAN
         
         if threshold_ndocs < len(approx_scores):
-            pids = pids[torch.topk(approx_scores, k=threshold_ndocs).indices]
+            unique_ids = unique_ids[torch.topk(approx_scores, k=threshold_ndocs).indices]
         
-        return pids, None # TODO: here the scores are not important - you should change the signature of the function rtype, and everywhere ahead
+        logger.info(f"Unique ids after pruning: {unique_ids.size(0)}")
+        return unique_ids, None # TODO: here the scores are not important - you should change the signature of the function rtype, and everywhere ahead
     
         
     
@@ -704,7 +726,14 @@ if __name__=="__main__":
     
     conf = OmegaConf.merge(config, cliconfig)
     os.makedirs("logs/colbert", exist_ok=True)
-    logging.basicConfig(filename=f'logs/colbert/{conf.data.dataset_name}_{conf.retriever.type}.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(process)d - %(message)s')
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(process)d - %(message)s',
+        handlers=[
+            logging.FileHandler(f'logs/colbert/{conf.data.dataset_name}_{conf.retriever.type}.log'),
+            logging.StreamHandler()
+        ]
+    )
     
 
     if conf.method == "baseline":

@@ -193,7 +193,7 @@ class Searcher:
         # Filter docs using pruned centroid scores
         for i in range(0, ceil(len(pids) / batch_size)):
             pids_ = pids[i * batch_size : (i+1) * batch_size]
-            codes_packed, codes_lengths = self.embeddings_strided.lookup_codes(pids_)
+            codes_packed, codes_lengths = self.ranker.embeddings_strided.lookup_codes(pids_)
             idx_ = idx[codes_packed.long()]
             pruned_codes_strided = StridedTensor(idx_, codes_lengths, use_gpu=True)
             pruned_codes_padded, pruned_codes_mask = pruned_codes_strided.as_padded_tensor()
