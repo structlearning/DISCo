@@ -647,9 +647,15 @@ class ColBERT_internal(ColBERTAugmented):
         
             
         all_scores = torch.empty_like(id_centroid_scores)
-        for i,new_cum in enumerate(sorted_cum_code_lengths): ## TODO: Good tensorisation?
-            length = new_code_lengths[i].item()
-            all_scores[new_cum-length:new_cum] = id_centroid_scores[cum_code_lengths[argsort_for_ids[i]]-length:cum_code_lengths[argsort_for_ids[i]]]
+        new_start = sorted_cum_code_lengths - new_code_lengths
+        old_end = cum_code_lengths[argsort_for_ids]
+        old_start = old_end-new_code_lengths
+        
+        for i in range(len(sorted_cum_code_lengths)): ## TODO: Good tensorisation?
+            all_scores[new_start[i]:sorted_cum_code_lengths[i]] = id_centroid_scores[old_start[i]:old_end[i]]
+          
+        ## ideal "tensorised splicing"  
+        ## all_scores[sorted_cum_code_lengths - new_code_length : sorted_cum_code_lengths] = id_centroid_scores[cum_code_lengths[argsort_for_ids]-new_code_length : cum_code_lengths[argsort_for_ids]]
         
         approx_scores_strided = StridedTensor(all_scores, aggregated_code_lengths, use_gpu=True)
         approx_scores_padded, approx_scores_mask = approx_scores_strided.as_padded_tensor()
