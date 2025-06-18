@@ -397,7 +397,7 @@ class ColBERTAugmented(ColBERTBaseE2E):
                     # with open(f"./mem_corpus_iter_{i}.pkl", "wb") as f:
                     #     pickle.dump((cembs, cmasks), f)
                    
-                    max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
+                    max_sim_partial, max_sim_indices, max_sim_scores =  (
                         qembs, qmasks, optvec.unsqueeze(-1), cembs, cmasks
                     )
                     real_indices = inds[torch.arange(inds.size(0)), max_sim_indices]
@@ -632,7 +632,7 @@ class ColBERT_internal(ColBERTAugmented):
         
         unique_ids, inverse_unique, counts = torch.unique(sorted_ids, return_inverse=True, return_counts=True) # should use unique_consecutive perhaps
         
-        logger.info(f"Unique ids: {unique_ids.size(0)}")
+        logger.debug(f"Unique ids: {unique_ids.size(0)}")
         if not prune_candidates:
             ## No need to prune candidates, so no need to compute the agg. score estimates
             return unique_ids, id_centroid_scores
@@ -667,7 +667,7 @@ class ColBERT_internal(ColBERTAugmented):
         if threshold_ndocs < len(approx_scores):
             unique_ids = unique_ids[torch.topk(approx_scores, k=threshold_ndocs).indices]
         
-        logger.info(f"Unique ids after pruning: {unique_ids.size(0)}")
+        logger.debug(f"Unique ids after pruning: {unique_ids.size(0)}")
         return unique_ids, None # TODO: here the scores are not important - you should change the signature of the function rtype, and everywhere ahead
     
         
@@ -736,7 +736,7 @@ if __name__=="__main__":
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(process)d - %(message)s',
         handlers=[
-            logging.FileHandler(f'logs/colbert/{conf.data.dataset_name}_{conf.retriever.type}.log'),
+            logging.FileHandler(f'logs/colbert/{conf.method}_{conf.data.dataset_name}_{conf.retriever.type}.log'),
             logging.StreamHandler()
         ]
     )

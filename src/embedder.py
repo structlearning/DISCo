@@ -155,6 +155,7 @@ class BERTEmbedder:
         """
             returns corpus embeddings with masks
         """
+        logger.info("get_corpus called with {} indices".format(indices.shape))
         
             ## fetch from disk ## TODO:error found
         if self.config.mode == "disk":
@@ -164,6 +165,8 @@ class BERTEmbedder:
 
             # find the unique docs and build a back‐pointer
             unique_ids, inv = torch.unique(flat, sorted=True, return_inverse=True)
+            
+            logger.info(f"Unique ids for get_corpus: {len(unique_ids)}")
             # inv: (Q*K,) tells you for each flattened slot which unique‐row to use
             inv = inv.view(Q, K)  # now (Q, K)
 
@@ -184,7 +187,7 @@ class BERTEmbedder:
 
             # 4) for each shard: load once, pad once, then pick out all needed rows
             for (b, s), lst in shard_groups.items():
-                print(f"Batch {b} Minibatch {s}")
+                logger.info(f"Batch {b} Minibatch {s}")
                 fp   = self.embedding_path(f"compressed_{D}", b, s)
                 data = torch.load(fp, map_location='cpu')
                 cemb = data['embs_compressed']   # (N, L, D)
