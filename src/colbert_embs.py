@@ -7,7 +7,7 @@ from src.dataloader import get_dataloader
 from src.embedder import ColBERTEmbedder
 from src.endtoend import BaseE2E
 from src.utils import partial_chamfer_sim_batched_with_rerank, save
-
+import pickle
 from tqdm import tqdm
 
 # from torch_scatter import scatter
@@ -27,7 +27,7 @@ class ColBERTBaseE2E(BaseE2E):
         self.config = config
         self.dataloader = get_dataloader(self.config.data)
         self.embedder = ColBERTEmbedder(config.embedder)
-        assert config.embedder.mv_type in ["colbertv2-base","colbertv2-plaid","xtr-base"]
+        assert config.embedder.mv_type in ["colbertv2-base","colbertv2-plaid","xtr-base","colbertv2-plaid-fresh_hp"]
         if self.config.augment:
             if self.config.dbl_norm:
                 self.mv_type = config.embedder.mv_type + "/dblnorm" # norm done twice for while augmentation
@@ -176,7 +176,7 @@ class ColBERTBaseline(ColBERTBaseE2E):
         ## TODO:tensorize -- just initialise the tensor to -1 then do torch.where ==-1 tensor[:,:1]
         result_tensor = torch.zeros((len(qembs), max_len), dtype=torch.int64)
         for i in range(len(qembs)):
-            current_set = list(res[i])
+            current_set = sorted(list(res[i]))
             current_set.extend([current_set[0]] * (max_len - len(current_set)))
             result_tensor[i] = torch.tensor(current_set)
         
@@ -192,13 +192,31 @@ class ColBERTBaseline(ColBERTBaseE2E):
         # KN TODO 2 : we might need batching for larger query sizes
         
         result_ids = self.search(qembs, qmasks, k=self.config.k)
+        print(f"result ids shape : {result_ids.shape}")
         
-        ## compute real scores with opts
-        cembs, cmasks = self.embedder.get_corpus(result_ids)
+        if self.config.embedder.mode =="mem":
+            ## compute real scores with opts
+            cembs, cmasks = self.embedder.get_corpus(result_ids)
+        else:
+            corpus = self.embedder.get_corpus(result_ids)
+            logger.info("All required documents are loaded")
+            cembs = []
+            cmasks = []
+            for q_id in tqdm(range(qembs.shape[0]), desc="Processing queries"):
+                cemb, cmask = corpus[
+                    (q_id * torch.ones(result_ids.shape[1], dtype=torch.long, device=corpus.device)),
+                    torch.arange(result_ids.shape[1], dtype=torch.long, device=corpus.device)
+                ]
+
+                cembs.append(cemb)
+                cmasks.append(cmask)
+            cembs = torch.stack(cembs)
+            cmasks = torch.stack(cmasks)
         
+        # Common code to disk and mem mode
         ## qembs: 300,64,128, qmasks: 300,64
         ## cembs: 300,100,330,128, cmasks: 300,100,330
-        
+
         ## qembs is already masked out, and zeroed out
         dp = torch.einsum("abc,adec->adbe",qembs,cembs.to(qembs.device))
         masked = torch.where(cmasks.bool().to(qembs.device).unsqueeze(2),dp,-10)
@@ -207,6 +225,7 @@ class ColBERTBaseline(ColBERTBaseE2E):
         
         save((result_ids, result_scores), result_file_path)
         return result_ids, result_scores
+
 
 ## Picks a larger top-b ( colbert_topk ) then performs a greedy marginal gain search in the top-b
 
@@ -313,7 +332,7 @@ class ColBERTAugmented(ColBERTBaseE2E):
         ## TODO:tensorize -- just initialise the tensor to -1 then do torch.where ==-1 tensor[:,:1]
         result = []
         for key in range(len(qembs)):
-            current_set = list(merged_ids[key])
+            current_set = sorted(list(merged_ids[key]))
             current_set.extend([current_set[0]] * (max_len - len(current_set)))
             result.append(current_set)
         # convert merged_ids to the required format
@@ -336,19 +355,72 @@ class ColBERTAugmented(ColBERTBaseE2E):
             for i in tqdm(range(self.config.k)):
                 logger.info(f"Running iteration {i+1}/{self.config.k}")
                 qembs[:,:,-1] = optvec
-                inds = self.search(qembs,qmasks,  k=self.config.colbert_topk)
+
                 # KN TODO: save stats?
-                # save(inds,"debug_inds.pkl")
+
+                if self.config.dbl_norm:
+                    file_path = f"./colbert_ids_dbl_norm/colbert_ids_{self.config.data.dataset_name}_{i}.pkl"
+                else:
+                    file_path = f"./colbert_ids_single_norm/colbert_ids_{self.config.data.dataset_name}_{i}.pkl"
+                print(file_path)
+
+                if os.path.exists(file_path):
+                    print("Loading indices from file...")
+                    with open(file_path, "rb") as f:
+                        inds = pickle.load(f)
+                else:
+                    print("File not found. Running search...")
+                    inds = self.search(qembs, qmasks, k=self.config.colbert_topk)
+                    # if self.config.embedder.mode=="mem":
+                    #     with open(f"./mem_query_iter_{i}.pkl", "wb") as f:
+                    #         pickle.dump((qembs, qmasks), f)
+                    #     with open(f"./mem_inds_iter_{i}.pkl", "wb") as f:
+                    #         pickle.dump(inds, f)
+                    # else:
+                    #     with open(f"./disk_query_iter_{i}.pkl", "wb") as f:
+                    #         pickle.dump((qembs, qmasks), f)
+                    #     with open(f"./disk_inds_iter_{i}.pkl", "wb") as f:
+                    #         pickle.dump(inds, f)
+                    with open(file_path, "wb") as f:
+                        pickle.dump(inds, f)
+                    
                 logger.info(f"Search Done - iter {i+1}/{self.config.k}")
-                cembs, cmasks = self.embedder.get_corpus(inds)
-                
-                max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
-                    qembs, qmasks, optvec.unsqueeze(-1), cembs, cmasks
-                )
-                real_indices = inds[torch.arange(inds.size(0)), max_sim_indices]
-                optvec = torch.maximum(optvec, max_sim_partial.to(optvec.device))
-                opt_scores[:,i].copy_(max_sim_scores)
-                opt_inds[:,i].copy_(real_indices)
+
+                if self.config.embedder.mode =="mem":
+                    cembs, cmasks = self.embedder.get_corpus(inds)
+                    # with open(f"./mem_corpus_iter_{i}.pkl", "wb") as f:
+                    #     pickle.dump((cembs, cmasks), f)
+                   
+                    max_sim_partial, max_sim_indices, max_sim_scores =  (
+                        qembs, qmasks, optvec.unsqueeze(-1), cembs, cmasks
+                    )
+                    real_indices = inds[torch.arange(inds.size(0)), max_sim_indices]
+                    optvec = torch.maximum(optvec, max_sim_partial.to(optvec.device))
+                    opt_scores[:,i].copy_(max_sim_scores)
+                    opt_inds[:,i].copy_(real_indices)
+                else:
+                    corpus = self.embedder.get_corpus(inds)
+                    logger.info("All required documents are loaded")
+                    # cembs = []
+                    # cmasks = []
+                    for q_id in tqdm(range(qembs.shape[0]), desc="Processing queries"):
+                        cemb, cmask = corpus[
+                            (q_id * torch.ones(inds.shape[1], dtype=torch.long, device=corpus.device)),
+                            torch.arange(inds.shape[1], dtype=torch.long, device=corpus.device)
+                        ]
+
+                        max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
+                            qembs[q_id].unsqueeze(0), qmasks[q_id].unsqueeze(0), optvec.unsqueeze(-1)[q_id].unsqueeze(0), cemb.unsqueeze(0), cmask.unsqueeze(0)
+                        )
+                        real_indices = inds[q_id, max_sim_indices]
+                        optvec[q_id] = torch.maximum(optvec[q_id], max_sim_partial.squeeze(0).to(optvec.device))
+                        opt_scores[q_id,i] = max_sim_scores
+                        opt_inds[q_id,i] = real_indices
+                    
+                    # cembs = torch.stack(cembs)
+                    # cmasks = torch.stack(cmasks)
+                    # with open(f"./disk_corpus_iter_{i}.pkl", "wb") as f:
+                    #     pickle.dump((cembs, cmasks), f)
             
         save((opt_inds,opt_scores), result_file_path)
         return opt_inds, opt_scores
@@ -406,7 +478,7 @@ class ColBERTaugwiththreshold(ColBERTAugmented):
         ## TODO:tensorize -- just initialise the tensor to -1 then do torch.where ==-1 tensor[:,:1]
         result = []
         for key in range(len(qembs)):
-            current_set = list(merged_ids[key])
+            current_set = sorted(list(merged_ids[key]))
             current_set.extend([current_set[0]] * (max_len - len(current_set)))
             result.append(current_set)
         # convert merged_ids to the required format
@@ -457,7 +529,24 @@ class ColBERT_internal(ColBERTAugmented):
                 # KN TODO: save stats?
                 # save(inds,"debug_inds.pkl")
                 logger.info(f"Search Done - iter {i+1}/{self.config.k}")
-                cembs, cmasks = self.embedder.get_corpus(inds)
+        
+                if self.config.embedder.mode=="mem":
+                    cembs, cmasks = self.embedder.get_corpus(inds)
+                else:
+                    corpus = self.embedder.get_corpus(inds)
+                    logger.info("All required documents are loaded")
+                    cembs = []
+                    cmasks = []
+                    for q_id in tqdm(range(qembs.shape[0]), desc="Processing queries"):
+                        cemb, cmask = corpus[
+                            (q_id * torch.ones(inds.shape[1], dtype=torch.long, device=corpus.device)),
+                            torch.arange(inds.shape[1], dtype=torch.long, device=corpus.device)
+                        ]
+
+                        cembs.append(cemb)
+                        cmasks.append(cmask)
+                    cembs = torch.stack(cembs)
+                    cmasks = torch.stack(cmasks)
                 
                 max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
                     qembs, qmasks, optvec.unsqueeze(-1), cembs, cmasks
@@ -525,42 +614,55 @@ class ColBERT_internal(ColBERTAugmented):
     def _aggregate_over_indices(self,args, prune_candidates):
         ## what size?
         ## pids_i, scores_i ->  from i^th index (/8)
-        ## max over scores to get pids
-        ## doc_id D -> Dx|Q| (centroid scores) ->  
-        ## multiple centroid scores -> max over |Q| dim for the same doc_id
-        ids, id_centroid_scores = zip(*args)
-        id_lengths = [len(id) for id in ids]
-        id_lengths_unique = [len(torch.unique(id)) for id in ids]
+        ## we bring centroid scores to the same place, so that colbert_score_reduce can be used
+        ## then we can threshold based on this score
+        
+        ids, id_centroid_scores, codes_lengths = zip(*args)
         ids = torch.cat(ids, dim=0)
-        # max aggregate over ids
-        unique_ids, unique_indices = torch.unique(ids, return_inverse=True)
-        # unique_scores = scatter(
-        #     id_centroid_scores, unique_indices, dim=0, dim_size=len(unique_ids), reduce="max"
-        # )
+        id_centroid_scores = torch.cat(id_centroid_scores, dim=0)
+        
+        argsort_for_ids = torch.argsort(ids, dim=0)
+        sorted_ids = ids[argsort_for_ids]
+        
+        unique_ids, inverse_unique, counts = torch.unique(sorted_ids, return_inverse=True, return_counts=True) # should use unique_consecutive perhaps
+        
+        logger.debug(f"Unique ids: {unique_ids.size(0)}")
         if not prune_candidates:
             ## No need to prune candidates, so no need to compute the agg. score estimates
             return unique_ids, id_centroid_scores
         
-        id_centroid_scores = torch.cat(id_centroid_scores, dim=0)
+        codes_lengths = torch.cat(codes_lengths, dim=0).to(self.device)
+        new_code_lengths = codes_lengths[argsort_for_ids]
+        cum_code_lengths = torch.cumsum(codes_lengths, dim=0)
+        sorted_cum_code_lengths = torch.cumsum(new_code_lengths, dim=0)       
         
-        unique_scores = torch.full((len(unique_ids), id_centroid_scores.size(1)), float('-inf'), device=id_centroid_scores.device, dtype=id_centroid_scores.dtype)
-        # print(unique_scores.dtype, unique_indices.dtype, id_centroid_scores.dtype)
-        unique_scores = unique_scores.scatter_reduce(
-            dim=0,
-            index=unique_indices.unsqueeze(1).expand(-1, id_centroid_scores.size(1)),
-            src=id_centroid_scores,
-            reduce='amax',
-            include_self=False
-        ).float()
+        aggregated_code_lengths = torch.zeros_like(unique_ids, dtype=new_code_lengths.dtype)
+        aggregated_code_lengths.scatter_add_(0, inverse_unique, new_code_lengths)
+        
+            
+        all_scores = torch.empty_like(id_centroid_scores)
+        new_start = sorted_cum_code_lengths - new_code_lengths
+        old_end = cum_code_lengths[argsort_for_ids]
+        old_start = old_end-new_code_lengths
+        
+        for i in range(len(sorted_cum_code_lengths)): ## TODO: Good tensorisation?
+            all_scores[new_start[i]:sorted_cum_code_lengths[i]] = id_centroid_scores[old_start[i]:old_end[i]]
+          
+        ## ideal "tensorised splicing"  
+        ## all_scores[sorted_cum_code_lengths - new_code_length : sorted_cum_code_lengths] = id_centroid_scores[cum_code_lengths[argsort_for_ids]-new_code_length : cum_code_lengths[argsort_for_ids]]
+        
+        approx_scores_strided = StridedTensor(all_scores, aggregated_code_lengths, use_gpu=True)
+        approx_scores_padded, approx_scores_mask = approx_scores_strided.as_padded_tensor()
+        approx_scores = colbert_score_reduce(approx_scores_padded, approx_scores_mask,self.searcher[0].config)
         # pick average over id lengths?
-        k_for_topk = sum(id_lengths_unique)//len(id_lengths_unique) ## TODO:decide
+        ## For now we heuristically go for something similar to the other colbert modification
+        threshold_ndocs = config.colbert_topk*config.num_rh_augment #config.ndocs//4 ## TODO:decide/CLEAN
         
-        _, topk_indices = torch.topk(unique_scores.sum(dim=1), k_for_topk)
-        topk_ids = unique_ids[topk_indices]
-        topk_scores = unique_scores[topk_indices]
-        # from IPython import embed; embed()
+        if threshold_ndocs < len(approx_scores):
+            unique_ids = unique_ids[torch.topk(approx_scores, k=threshold_ndocs).indices]
         
-        return topk_ids, topk_scores
+        logger.debug(f"Unique ids after pruning: {unique_ids.size(0)}")
+        return unique_ids, None # TODO: here the scores are not important - you should change the signature of the function rtype, and everywhere ahead
     
         
     
@@ -624,8 +726,15 @@ if __name__=="__main__":
     
     conf = OmegaConf.merge(config, cliconfig)
     os.makedirs("logs/colbert", exist_ok=True)
-    logging.basicConfig(filename=f'logs/colbert/{conf.data.dataset_name}_{conf.retriever.type}.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(process)d - %(message)s')
-    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(process)d - %(message)s',
+        handlers=[
+            logging.FileHandler(f'logs/colbert/{conf.method}_{conf.data.dataset_name}_{conf.retriever.type}.log'),
+            logging.StreamHandler()
+        ]
+    )
+    ## IMPORTANT: switching between plaid and base
     if conf.embedder.mv_type == "colbertv2-plaid":
         from colbert.infra import Run, RunConfig, ColBERTConfig
         from colbert import Indexer, Searcher

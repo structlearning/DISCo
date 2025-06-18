@@ -42,10 +42,6 @@ class CandidateGeneration:
         # doc 1 doc2 (cell1) -> scores[1,:],scores[1,:]
         if self.use_gpu:
             pids = pids.cuda()
-        if pid_centroid_scores: ## my modification
-            cell_lengths = cell_lengths.to(torch.long)
-            indices = torch.repeat_interleave(torch.arange(len(cell_lengths), device=cell_lengths.device), cell_lengths)
-            scores = scores[indices]
         return pids, scores
 
     def generate_candidate_scores(self, Q, eids):

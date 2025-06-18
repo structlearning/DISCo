@@ -14,6 +14,10 @@ from colbert.infra.run import Run
 from colbert.infra.config import ColBERTConfig, RunConfig
 from colbert.infra.launcher import print_memory_stats
 
+from math import ceil
+from colbert.modeling.colbert import colbert_score_reduce
+from colbert.search.strided_tensor import StridedTensor
+
 import time
 
 TextQueries = Union[str, 'list[str]', 'dict[int, str]', Queries]
@@ -175,7 +179,43 @@ class Searcher:
         Q_aug = torch.nn.functional.normalize(Q_aug.squeeze(0), dim=-1, p=2) # NOTE: Candidate generation uses only the query tokens
         if self.ranker.use_gpu:
             Q_aug = Q_aug.cuda().half()
-        return self.ranker.generate_candidate_pids(Q_aug, self.config.ncells, pid_centroid_scores=prune_candidates)
+        pids,centroid_scores = self.ranker.generate_candidate_pids(Q_aug, self.config.ncells)
+        
+        if not prune_candidates:
+            return pids, centroid_scores, None
+        
+        ### the following is picked up from score_pids in search/index_storage.py
+        batch_size = 2 ** 20
+        idx = centroid_scores.max(-1).values >= self.config.centroid_score_threshold
+        
+        approx_scores = []
+
+        # Filter docs using pruned centroid scores
+        for i in range(0, ceil(len(pids) / batch_size)):
+            pids_ = pids[i * batch_size : (i+1) * batch_size]
+            codes_packed, codes_lengths = self.ranker.embeddings_strided.lookup_codes(pids_)
+            idx_ = idx[codes_packed.long()]
+            pruned_codes_strided = StridedTensor(idx_, codes_lengths, use_gpu=True)
+            pruned_codes_padded, pruned_codes_mask = pruned_codes_strided.as_padded_tensor()
+            pruned_codes_lengths = (pruned_codes_padded * pruned_codes_mask).sum(dim=1)
+            codes_packed_ = codes_packed[idx_]
+            approx_scores_ = centroid_scores[codes_packed_.long()]
+            if approx_scores_.shape[0] == 0:
+                approx_scores.append(torch.zeros((len(pids_),), dtype=approx_scores_.dtype).cuda())
+                continue
+            approx_scores_strided = StridedTensor(approx_scores_, pruned_codes_lengths, use_gpu=True)
+            approx_scores_padded, approx_scores_mask = approx_scores_strided.as_padded_tensor()
+            approx_scores_ = colbert_score_reduce(approx_scores_padded, approx_scores_mask, self.config)
+            approx_scores.append(approx_scores_)
+        approx_scores = torch.cat(approx_scores, dim=0)
+        assert approx_scores.is_cuda, approx_scores.device
+        if self.config.ndocs < len(approx_scores):
+            pids = pids[torch.topk(approx_scores, k=self.config.ndocs).indices]
+            
+        ## Here we are getting the approx scores from the centroid scores that is returned ahead
+        codes_packed, codes_lengths = self.ranker.embeddings_strided.lookup_codes(pids)
+        approx_scores = centroid_scores[codes_packed.long()]
+        return pids, approx_scores, codes_lengths
         
 
     def rank_modified(self, Q, opt_vec, filter_fn=None, pids=None):

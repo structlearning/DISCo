@@ -43,7 +43,7 @@ colbert_internal:
 
 
 embedder:
-  mode: "mem"
+  mode: "disk"
   type: 'BERT'
   mv_type: "colbertv2-plaid" # "colbertv2-base", "colbertv2-plaid", "xtr-base"
   emb_dim: 128
