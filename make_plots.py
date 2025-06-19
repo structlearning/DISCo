@@ -29,11 +29,11 @@ def plot_b_vs_metric(dataset,k_values,b_values,norm_types:str|list=["norm","dbln
     if isinstance(norm_types,str):
         norm_types = [norm_types]
     for k in k_values:
-        
+        tx = lambda t,b: f"pickles/results/BERT/colbertv2-plaid/dblnorm_aug_n2_d128_rh8_threshold{t}_{dataset}_k15_rerankperh{b}.pkl"
 
-        baseline = f"pickles/results/greedy_base_0_128_k{15}_{data}_bf.pkl"
+        baseline = f"pickles/results/greedy_base_0_128_k{15}_{dataset}_bf.pkl"
         
-        
+        topk = f"pickles/results/BERT/colbertv2-plaid/norm_base_n2_d128_{dataset}_k15.pkl"
         
         baseline_indices, baseline_scores = load_from_baseline(baseline)
         baseline_indices = [set(x.tolist()) for x in baseline_indices[:,:k]]
@@ -218,31 +218,29 @@ def plot_b_vs_metric(dataset,k_values,b_values,norm_types:str|list=["norm","dbln
                 jaccard_figs.add_trace(go.Scatter(x=x_axis, y=y_jac, mode='lines+markers', name=f"Threshold {t} - {norm_type}"))
                 intersection_figs.add_trace(go.Scatter(x=x_axis, y=y_int, mode='lines+markers', name=f"Threshold {t} - {norm_type}"))
         score_figs.update_layout(
-            title=f"{data}  : Mean Scores at (k={k}) for Different Variants",
+            title=f"{dataset}  : Mean Scores at (k={k}) for Different Thresholds",
             xaxis_title="Effective Bucket Size",
             yaxis_title="Mean Score",
             legend_title="Variant"
         )
         jaccard_figs.update_layout(
-            title=f"{data}  Similarity at (k={k}) for Different Variants",
+            title=f"{dataset}  Similarity at (k={k}) for Different Thresholds",
             xaxis_title="Effective Bucket Size",
             yaxis_title="Jaccard Similarity",
             legend_title="Variant"
         )
         intersection_figs.update_layout(
-            title=f"{data}  : Intersection Size at (k={k}) for Different Variants",
+            title=f"{dataset}  : Intersection Size at (k={k}) for Different Thresholds",
             xaxis_title="Effective Bucket Size",
             yaxis_title="Intersection Size",
             legend_title="Variant"
         )
-        nname = "all" if len(norm_types) > 1 else norm_types[0]
-            
-        score_figs.write_html(f"plots/html/bvF_{data}_{nname}_k{k}_{'.'.join(map(str, b_values))}.html")
-        score_figs.write_image(f"plots/images/bvF_{data}_{nname}_k{k}_{'.'.join(map(str, b_values))}.jpeg")
-        jaccard_figs.write_html(f"plots/html/bvJ_{data}_{nname}_k{k}_{'.'.join(map(str, b_values))}.html")
-        jaccard_figs.write_image(f"plots/images/bvJ_{data}_{nname}_k{k}_{'.'.join(map(str, b_values))}.jpeg")
-        intersection_figs.write_html(f"plots/html/bvI_{data}_{nname}_k{k}_{'.'.join(map(str, b_values))}.html")
-        intersection_figs.write_image(f"plots/images/bvI_{data}_{nname}_k{k}_{'.'.join(map(str, b_values))}.jpeg")
+        score_figs.write_html(f"plots/html/bvF_{dataset}_dblnorm_k{k}_{'.'.join(map(str, b_values))}.html")
+        score_figs.write_image(f"plots/images/bvF_{dataset}_dblnorm_k{k}_{'.'.join(map(str, b_values))}.jpeg")
+        jaccard_figs.write_html(f"plots/html/bvJ_{dataset}_dblnorm_k{k}_{'.'.join(map(str, b_values))}.html")
+        jaccard_figs.write_image(f"plots/images/bvJ_{dataset}_dblnorm_k{k}_{'.'.join(map(str, b_values))}.jpeg")
+        intersection_figs.write_html(f"plots/html/bvI_{dataset}_dblnorm_k{k}_{'.'.join(map(str, b_values))}.html")
+        intersection_figs.write_image(f"plots/images/bvI_{dataset}_dblnorm_k{k}_{'.'.join(map(str, b_values))}.jpeg")
         
 
 def plot_k_vs_metric(dataset,k,bsizes=[10,25,50,100,200],norm_types:str|list=["norm","dblnorm"]):
