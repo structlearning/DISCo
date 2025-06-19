@@ -4,7 +4,9 @@
 if [ "$HOSTNAME" = "elk" ]; then
     GPUS=(1 2 3 4 6)
 elif [ "$HOSTNAME" = "fox" ]; then
-    GPUS=(2 3 4 0 1)  # For FOX
+	GPUS=(0 1 2 3 4 )  # For FOX
+elif [ "$HOSTNAME" = "dog" ]; then
+    GPUS=(0 1 2 3 4 5)
 else
     echo "$HOSTNAME"
     exit
@@ -26,16 +28,12 @@ for ((i = 0; i < NUM_RH_AUGMENT; i++)); do
     
     echo "Launching rh_num=$i on GPU $GPU_ID"
     
-    # Double augmentation flag on below
+    # double augmentation flag on below
+
+    # Do not separate line by line using slash even though it looks aesthetic.
+    # rh_num does not get set if that is done.
     CUDA_VISIBLE_DEVICES=$GPU_ID \
-    python3 -m src.colbert_embs \
-        data.dataset_name="$DATASET_NAME" \
-        overwrite_index=True \
-        index=True \
-        augment=True \
-        dbl_norm=True \
-        method="augmented" \
-        rh_num=$i &
+    python3 -m src.colbert_embs data.dataset_name=$DATASET_NAME overwrite_index=False index=True augment=True dbl_norm=True method="augmented" generate_new_rh=True rh_num=$i &
 
     # Double augmentation flag off below
     # CUDA_VISIBLE_DEVICES=$GPU_ID \
