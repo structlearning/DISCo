@@ -606,6 +606,14 @@ class GreedyBaseline_submodlib(BaseE2E):
             ## speed this up with multiprocessing bruh
             for query_id,size in tqdm(enumerate(query_sizes), desc="Query", total=self.query_num):
                 partial = np.concatenate([elem[:,q_start:q_start+size]for elem in partials_list],axis=0)
+                # submodlib issue: submodlib (according to the docs) expects the kernel matrix input to be of shape
+                # (n_rep, n) where n_rep is size of representative set (query tokens) and n is the number of corpus documents.
+                # However, the facility location implementation in submodlib expects the input to be in column-major order,
+                # and reads in this order. This does not match the order of the input we provide, which is in row-major order.
+                # In our fork of submodlib, the facility location function object reads the kernel matrix input in row-major order.
+                # Note: We tested different combinations of partial vs partial.T, n vs n_rep setting, and row vs column-major input reading.
+                # The only combination that gives correct output (that matches greedy baseline) is partial.T with n_rep = size and
+                # n = corp_size, and row-major input reading.
                 opt_for_each_query = submodlib.functions.facilityLocation.FacilityLocationFunction(n=corp_size,mode="dense",separate_rep=True,n_rep=size,sijs=partial.T)
         
                 q_start += size
@@ -712,15 +720,14 @@ if __name__=="__main__":
     warnings.filterwarnings("ignore", category=FutureWarning)
 
     os.makedirs("logs/end_to_end",exist_ok=True)
-    
+
     file_config = OmegaConf.load("configs/config.yaml")
     cli_config = OmegaConf.from_cli()
-    
+
     config = OmegaConf.merge(file_config,cli_config)
-    
+
     logging.basicConfig(filename=f'logs/end_to_end/{config.method}_{config.data.dataset_name}_{config.retriever.type}.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(process)d - %(message)s')
     # logger.log(config)
-    
+
     retriever = get_method(config)
     retriever.run()
-
