@@ -16,6 +16,11 @@ from .embedder import ColBERTEmbedder
 
 from .utils import partial_chamfer_sim_batched_with_rerank
 
+# 1) Make sure the env var is set *inside* Python too
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+# 2) Turn on PyTorch’s deterministic‐only mode
+torch.use_deterministic_algorithms(True)
 
 
 logger = logging.getLogger(__name__)
@@ -386,7 +391,9 @@ class GreedyBaseline_v0(BaseE2E):
                         temp_opt_indices = -torch.ones(self.embedder.qembs.size(0)).to(self.embedder.qembs.device)
                         temp_opts_scores = -2000.0*torch.ones(self.embedder.qembs.size(0)).to(self.embedder.qembs.device)
                         doc_id = 0
+                        # Iterate over (batch, mini-batch, chunk)
                         for cemb, cmask in tqdm(self.embedder.iterate_over_batches(self.device,self.config.embedder.mode),desc="Corpus"):      
+                            # A single chunk's worth of indices
                             inds = torch.arange(doc_id, doc_id+cemb.shape[0])
                             for q_id in tqdm(range(self.embedder.qembs.shape[0]), desc="Processing queries"):
                                 max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
