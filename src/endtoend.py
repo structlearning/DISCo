@@ -73,6 +73,7 @@ class GreedyBaseline_v0(BaseE2E):
         logger.info(f"sb {sb}")
         logger.info(f"masks {masks}")
         additive_masks = (masks.to(torch.float32)-1)*2
+        # TODO: Maybe compute sb corpus-query product only once
         sb = torch.where(masks.bool().unsqueeze(-1), sb , -10)
         logger.info(f"sb masked {sb}")
         partial = sb.amax(dim=1).T # q_set,num_corpus
@@ -94,10 +95,57 @@ class GreedyBaseline_v0(BaseE2E):
             val, ind = torch.max(sim2,0)
             optvec = torch.maximum(optvec,partial[:,ind])
             result_ours.append((ind.item(),val.item()))
+
+        # compute using submodlib
+        return result_ours
+
+    def get_single_exact_numpy(self, qvec):
+        """
+        This function is similar to get_single_exact but uses numpy for computations.
+        It is not used in the current implementation but can be useful for debugging or comparison.
+        """
+        corp_size = len(self.embedder.cembs)
+        corpus,masks = self.embedder.get_corpus(torch.arange(corp_size))
+
+        corpus_np = corpus.cpu().numpy()
+        masks_np = masks.cpu().numpy()
+
+        logger.info(f"qvec : {qvec}")
+        sb = (corpus_np)@(qvec.T)
+        logger.info(f"sb {sb}")
+        logger.info(f"masks {masks}")
+
+        # Ensure masks_np is boolean and broadcast to sb's shape
+        mask_expanded = masks_np.astype(bool)[..., np.newaxis]  # shape [B, T, 1]
+        # Apply masking
+        sb = np.where(mask_expanded, sb, -10)
+        logger.info(f"sb masked {sb}")
+
+        partial = np.amax(sb, axis=1).T # q_set,num_corpus
+        logger.info(f"partial {partial}")
+
+        result_ours = []
+        # k = 0
+        sim2 = partial.sum(axis=0) # num_corpus
+        logger.info(f"sim2 {sim2}")
+        val, ind = np.max(sim2, axis=0), np.argmax(sim2, axis=0)
+
+        optvec = partial[:,ind]
+        result_ours.append((ind,val))
+
+        for i in range(1,self.k):
+            sb = (corpus_np)@(qvec.T)
+            additive_masks = ((masks.to(torch.float32)-1)*2).numpy()
+            sb = sb + np.expand_dims(additive_masks, axis=-1)
+            partial = np.amax(sb, axis=1).T # q_set,num_corpus
+            partial = np.maximum(partial, np.expand_dims(optvec, axis=1))
+            sim2 = partial.sum(axis=0)
+            val, ind = np.max(sim2, axis=0), np.argmax(sim2, axis=0)
+            optvec = np.maximum(optvec, partial[:,ind])
+            result_ours.append((ind,val))
         
         # compute using submodlib
         return result_ours
-        
     
     def get_single(self,qvec): # TODO can be multiprocessed?
         corp_size = len(self.embedder.cembs) ## embedder must be in mem mode
@@ -315,6 +363,7 @@ class GreedyBaseline_v0(BaseE2E):
                 for query_id in tqdm(range(chkpt,self.query_num)):
                     query = self.embedder.qembs[query_id][self.embedder.qmasks[query_id].bool()]
                     opts.append(self.get_single_exact(query))
+                    # opts.append(self.get_single_exact_numpy(query.cpu().numpy()))
                     if (time.time() - lap)> 60*60 : # checkpoint every hour
                         save(opts,chkpath)
                         save({
