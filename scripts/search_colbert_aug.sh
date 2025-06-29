@@ -5,16 +5,24 @@ if [ "$#" -ne 1 ]; then
 fi
 dataset_name="$1"
 
-cuda_visible_devices=$(echo $CUDA_VISIBLE_DEVICES | tr ',' ' ')
-num_gpus=$(echo $cuda_visible_devices | wc -w)
-gpus=($cuda_visible_devices)
+# List of available GPUs
+if [ "$HOSTNAME" = "elk" ]; then
+    gpus=(1 2 3 4 6)
+elif [ "$HOSTNAME" = "fox" ]; then
+	gpus=(0 1 2 3 4 )  # For FOX
+elif [ "$HOSTNAME" = "dog" ]; then
+    gpus=(0 1 2 3 4 5)
+else
+    echo "$HOSTNAME"
+    exit
+fi
 
-
+num_gpus=${#gpus[@]}
 counter=0
 
 # for bs in 10 25 50 100 200; do
 # for bs in 50 100 200; do
-for bs in 200 ; do
+for bs in 100 200 ; do
     CUDA_VISIBLE_DEVICES=${gpus[$counter]} \
     python3 -m src.colbert_embs \
         k=15 \

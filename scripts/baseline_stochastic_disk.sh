@@ -18,11 +18,11 @@ fi
 
 ### Exact GReedy followed by stochastic greedy
 
-i=0
-
-for bs in 0 50 100 200 400 800 1000; do
+i=3
+# for bs in 0 50 100 200 400 800 1000; do
+for bs in 200; do
     GPU_ID=${GPUS[$i]}
-    CUDA_VISIBLE_DEVICES=$GPU_ID python3 -m src.endtoend k=15 method='v0' baseline.bucket_size=$bs data.dataset_name=$1 embedder.mv_type='colbertv2-plaid' &
+    CUDA_VISIBLE_DEVICES=$GPU_ID python3 -m src.endtoend k=15 method='v0' embedder.mode="disk" baseline.distributed_search=False baseline.bucket_size=$bs data.dataset_name=$1 embedder.mv_type='colbertv2-plaid' &
     i=$((i + 1))
     if [ $((i % ${#GPUS[@]})) -eq 0 ];
     then
