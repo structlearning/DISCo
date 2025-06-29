@@ -1,6 +1,8 @@
 import os
 import torch
 
+from typing import Union
+
 import __main__
 from dataclasses import dataclass
 from colbert.utils.utils import timestamp
@@ -115,7 +117,7 @@ class DocSettings:
     doc_maxlen: int = DefaultVal(220)
     mask_punctuation: bool = DefaultVal(True)
     augment: bool = DefaultVal(False) # might not need it here
-    RH_file: str| None = DefaultVal(None)  # filename of the file containing the random hash table
+    RH_file: Union[str, None] = DefaultVal(None) # filename of the file containing the random hash table
     generate_new_rh: bool = DefaultVal(False)  # whether to generate a new random hyperplane
     # embedder_type: str = DefaultVal("BERT")  # BERT or T5  NOTE: turned out unnecessary for now
     dbl_norm: bool = DefaultVal(True)  # whether to use double normalization
