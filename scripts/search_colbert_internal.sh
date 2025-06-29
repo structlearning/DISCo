@@ -12,6 +12,8 @@ elif [ "$HOSTNAME" = "fox" ]; then
 	gpus=(0 1 2 3 4 )  # For FOX
 elif [ "$HOSTNAME" = "dog" ]; then
     gpus=(0 1 2 3 4 5)
+elif [ "$HOSTNAME" = "iitb-dgx2.iitb.ac.in" ]; then
+    gpus=(0 1 2 3 4 5 6 7)
 else
     echo "$HOSTNAME"
     exit
