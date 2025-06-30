@@ -19,8 +19,11 @@ else
 fi
 
 ### Exact GReedy followed by stochastic greedy
-
-i=0
+# I want i to be initialized from standard input, and if not available, then as 0.
+i=$2
+if [ -z "$i" ]; then
+    i=0
+fi
 
 for bs in 0 50 100 200 400 800 1000; do
     GPU_ID=${GPUS[$i]}

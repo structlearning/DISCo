@@ -21,7 +21,10 @@ else
 fi
 
 num_gpus=${#gpus[@]}
-counter=0
+counter=$2
+if [ -z "$counter" ]; then
+    counter=0
+fi
 
 # for bs in 10 25 50 100 200; do
 # for bs in 50 100 200; do
