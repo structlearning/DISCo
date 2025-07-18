@@ -1,6 +1,8 @@
 import os
 import pickle
 
+import torch
+
 
 class StateSaverBase(object):
     def __init__(self, *args, **kwargs):
@@ -14,12 +16,11 @@ class StateSaverBase(object):
         self.path = f"{self.prefix}/{self.dataset}"
 
     def serialize(self):
-        with open(self.path, 'wb') as f:
-            pickle.dump(self.state, f)
+        torch.save(self.state, self.path)
 
     def unserialize(self):
-        with open(self.path, 'rb') as f:
-            self.state = pickle.load(f)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.state = torch.load(self.path, map_location=device)
 
     def unpack_state(self):
         raise NotImplementedError("This method should be implemented in subclasses.")
@@ -46,6 +47,10 @@ class StateSaverSubmodlib(StateSaverBase):
     def unpack_state(self):
         return self.state['query_batch_id'], self.state['partials_list'], self.state['opt_done'], \
                 self.state['opts'], self.state['corp_size']
+
+    def unserialize(self):
+        # The items saved are numpy arrays, so map location should explicitly be 'cpu'
+        self.state = torch.load(self.path, map_location='cpu')
 
 
 class StateSaverGreedy(StateSaverBase):

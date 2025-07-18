@@ -68,6 +68,8 @@ class GreedyBaseline_v0(BaseE2E):
         self.k = config.k
         self.global_idx = 0
 
+        self.state_saver = StateSaverGreedy(dataset=self.dataloader.dataset_name, greedy_bs=config.baseline.bucket_size)
+
     def get_single_exact(self,qvec):
         corp_size = len(self.embedder.cembs)
         corpus,masks = self.embedder.get_corpus(torch.arange(corp_size))
@@ -358,7 +360,6 @@ class GreedyBaseline_v0(BaseE2E):
             opts = load(chkpath,"rb")
             chkpt = chklog["completed_qid"] + 1 
             set_seed_from_checkpoint(**chklog["seeds"])
-            
         
         logger.info(f"Starting from query_id: {chkpt}")
         start = time.time()
@@ -383,11 +384,33 @@ class GreedyBaseline_v0(BaseE2E):
                         lap = time.time()
             else: # if embedder.mode = disk
                 if not self.config.baseline.distributed_search:
-                    optvec = -2.0*torch.ones_like(self.embedder.qmasks).to(self.embedder.qembs.device)
-                    opt_indices = -torch.ones(self.embedder.qembs.size(0),self.k).to(self.embedder.qembs.device)
-                    opts_scores = -2000.0*torch.ones(self.embedder.qembs.size(0),self.k).to(self.embedder.qembs.device)
+                    if self.config.load_state:
+                        try:
+                            self.state_saver.unserialize()
+                        except FileNotFoundError:
+                            logger.warning("State file not found, starting from scratch")
+                            budget_iter = 0
 
-                    for i in tqdm(range(self.k), desc="K", total=self.k):
+                            optvec = -2.0*torch.ones_like(self.embedder.qmasks).to(self.embedder.qembs.device)
+                            opt_indices = -torch.ones(self.embedder.qembs.size(0),self.k).to(self.embedder.qembs.device)
+                            opts_scores = -2000.0*torch.ones(self.embedder.qembs.size(0),self.k).to(self.embedder.qembs.device)
+
+                        else:
+                            budget_iter = self.state_saver.state["budget_iter"]
+                            optvec = self.state_saver.state["optvec"]
+                            opt_indices = self.state_saver.state["opt_indices"]
+                            opts_scores = self.state_saver.state["opts_scores"]
+                            logger.info(f"Loaded greedy stuff from state, budget iter: {budget_iter}")
+
+                            # Start from next budget iter
+                            budget_iter = budget_iter + 1
+                    else:
+                        budget_iter = 0
+                        optvec = -2.0*torch.ones_like(self.embedder.qmasks).to(self.embedder.qembs.device)
+                        opt_indices = -torch.ones(self.embedder.qembs.size(0),self.k).to(self.embedder.qembs.device)
+                        opts_scores = -2000.0*torch.ones(self.embedder.qembs.size(0),self.k).to(self.embedder.qembs.device)
+
+                    for i in tqdm(range(budget_iter, self.k), desc="K", total=self.k):
                         temp_optvec = -2.0*torch.ones_like(self.embedder.qmasks).to(self.embedder.qembs.device)
                         temp_opt_indices = -torch.ones(self.embedder.qembs.size(0)).to(self.embedder.qembs.device)
                         temp_opts_scores = -2000.0*torch.ones(self.embedder.qembs.size(0)).to(self.embedder.qembs.device)
@@ -418,6 +441,15 @@ class GreedyBaseline_v0(BaseE2E):
                         # print(optvec)
                         # with open(f"./disk_optvec_{i}.pkl", "wb") as f:
                         #     pickle.dump(optvec, f)
+
+                        self.state_saver.pack_state(
+                            budget_iter=i,
+                            optvec=optvec,
+                            opt_indices=opt_indices,
+                            opts_scores=opts_scores
+                        )
+                        self.state_saver.serialize()
+                        logger.info(f"Saved state after budget iteration {i}")
                     
                     opt_indices = opt_indices.cpu()
                     opts_scores = opts_scores.cpu()
