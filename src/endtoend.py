@@ -13,6 +13,7 @@ import pickle
 
 from .dataloader import get_dataloader
 from .embedder import ColBERTEmbedder
+from .state_saver import StateSaverSubmodlib, StateSaverGreedy
 
 from .utils import partial_chamfer_sim_batched_with_rerank
 
@@ -477,6 +478,8 @@ class GreedyBaseline_submodlib(BaseE2E):
             raise ValueError(f"This optimizer is not allowed: {config.submodlib.optimizer}")
         self.variety = f"greedy_submodlib_{self.optimizer}_k{config.k}"
         self.k = config.k
+
+        self.state_saver = StateSaverSubmodlib(dataset=self.dataloader.dataset_name, submodlib_method=self.optimizer)
     
     def get_single(self,qvec): # TODO can be multiprocessed?
         raise ValueError("Function not used")
@@ -625,31 +628,81 @@ class GreedyBaseline_submodlib(BaseE2E):
             ## MULTIPLE DISK PROBE VARIANT
             mega_q_batch_size = 100
             start = time.time()
-            for i in range(0,self.query_num,mega_q_batch_size):
+
+            if self.config.load_state:
+                try:
+                    self.state_saver.unserialize()
+                except FileNotFoundError:
+                    logger.warning("State file not found, starting from scratch")
+                    query_batch_index = 0
+                    opts_done = False
+                    partials_list_loaded = []
+
+                else:
+                    partials_list_loaded = self.state_saver.state["partials_list"]
+                    query_batch_index = self.state_saver.state["query_batch_index"]
+                    opts_done = self.state_saver.state["opts_done"]
+                    corp_size_loaded = self.state_saver.state["corp_size"]
+                    logger.info(f"Loaded submodlib stuff from state, batch index: {query_batch_index}")
+
+                    # If we quit after partials_list was computed but before the current opts was computed,
+                    # we continue from the current batch index, skip partials_list computation, and continue
+                    # with opts computation.
+                    # If we quit after the current opts was computed, we continue from the next batch index.
+                    if opts_done:
+                        query_batch_index = query_batch_index + 1
+                        use_partials_flag = False
+                    else:
+                        use_partials_flag = True
+            else:
+                query_batch_index = 0
+                partials_list_loaded = []
+                use_partials_flag = False 
+
+            for i in range(query_batch_index, self.query_num,mega_q_batch_size):
                 total_start = time.time()
                 flattened_queries = self.embedder.qembs[i:i+mega_q_batch_size].reshape(-1,self.embedder.qembs.size(-1))[self.embedder.qmasks[i:i+mega_q_batch_size].reshape(-1).bool()].to(self.device)
-                
-                partials_list = []
-                corp_size = 0
-                batch_size = 10000
-                for cemb,cmask in tqdm(self.embedder.iterate_over_batches(self.device,self.config.embedder.mode),desc="Corpus"):
-                    corp_size += cmask.size(0)
-                    
-                    partial = torch.zeros((cemb.size(0),flattened_queries.size(0)),device='cpu')
-                    for j in range(0,flattened_queries.size(0),batch_size):
-                        partial[:,j:j+batch_size] = torch.where(cmask.bool().unsqueeze(-1),cemb@flattened_queries[j:j+batch_size].T,-10).amax(dim=1).cpu()
-                    partials_list.append(partial.numpy())
-                logger.info(F"Time for disk probe: {time.time()-total_start}")
-                logger.info(f"Starting from query_id: {i}")
+
+                if use_partials_flag:
+                    logger.info(f"Using precomputed partials_list from state for batch index {i}")
+                    partials_list = partials_list_loaded
+                    corp_size = corp_size_loaded
+
+                else:
+                    logger.info(f"Computing partials_list from scratch for batch index {i}")
+                    partials_list = []
+                    corp_size = 0
+                    batch_size = 10000
+                    for cemb,cmask in tqdm(self.embedder.iterate_over_batches(self.device,self.config.embedder.mode),desc="Corpus"):
+                        corp_size += cmask.size(0)
+                        
+                        partial = torch.zeros((cemb.size(0),flattened_queries.size(0)),device='cpu')
+                        for j in range(0,flattened_queries.size(0),batch_size):
+                            partial[:,j:j+batch_size] = torch.where(cmask.bool().unsqueeze(-1),cemb@flattened_queries[j:j+batch_size].T,-10).amax(dim=1).cpu()
+                        partials_list.append(partial.numpy())
+
+                    self.state_saver.pack_state(
+                        query_batch_index=i,
+                        partials_list=partials_list,
+                        opts_done=False,
+                        opts=opts,
+                        corp_size=corp_size
+                    )
+                    self.state_saver.serialize()
+                    logger.info("saved partials_list and opts to state (after disk probe)")
+
+                    logger.info(F"Time for disk probe: {time.time()-total_start}")
+                    logger.info(f"Starting from query_id: {i}")
                 lap = time.time()
-                
+
                 q_start = 0
-                for query_id in tqdm(range(i,i+mega_q_batch_size), desc=f"Query batch {i}", total=mega_q_batch_size):
+                max_query_sizes = query_sizes.shape[0]
+                for query_id in tqdm(range(i, min(max_query_sizes, i+mega_q_batch_size)), desc=f"Query batch {i}", total=mega_q_batch_size):
                     q_start_time = time.time()
                     size = query_sizes[query_id].item()
                     partial = np.concatenate([elem[:,q_start:q_start+size]for elem in partials_list],axis=0)
                     opt_for_each_query = submodlib.functions.facilityLocation.FacilityLocationFunction(n=corp_size,mode="dense",separate_rep=True,n_rep=size,sijs=partial.T)
-            
+
                     q_start += size                    
                     result = opt_for_each_query.maximize(budget=self.k,stopIfZeroGain=True,optimizer=self.optimizer)
                     
@@ -658,6 +711,17 @@ class GreedyBaseline_submodlib(BaseE2E):
                     logger.info(f"Total time taken for query {query_id}: {q_end_time-q_start_time} seconds")
                 end = time.time()
                 logger.info(f"Total time taken for running submodlib/querying: {end-lap} seconds")
+
+                self.state_saver.pack_state(
+                    query_batch_index=i,
+                    partials_list=partials_list,
+                    opts_done=True,
+                    opts=opts,
+                    corp_size=None
+                )
+                self.state_saver.serialize()
+                logger.info("saved partials_list and opts to state (after submodlib/querying)")
+
             end = time.time()
             logger.info(f"Total time taken for running both steps: {end-start} seconds")
 

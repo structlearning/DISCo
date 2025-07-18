@@ -39,5 +39,5 @@ embedder:
   emb_dim: 128
   query_batch_size: null
 
-
+load_state: False # if True, load the state from the path specified in the state_saver
 
