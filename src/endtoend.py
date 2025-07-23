@@ -713,15 +713,15 @@ class GreedyBaseline_submodlib(BaseE2E):
                             partial[:,j:j+batch_size] = torch.where(cmask.bool().unsqueeze(-1),cemb@flattened_queries[j:j+batch_size].T,-10).amax(dim=1).cpu()
                         partials_list.append(partial.numpy())
 
-                    self.state_saver.pack_state(
-                        query_batch_index=i,
-                        partials_list=partials_list,
-                        opts_done=False,
-                        opts=opts,
-                        corp_size=corp_size
-                    )
-                    self.state_saver.serialize()
-                    logger.info("saved partials_list and opts to state (after disk probe)")
+                    # self.state_saver.pack_state(
+                    #     query_batch_index=i,
+                    #     partials_list=partials_list,
+                    #     opts_done=False,
+                    #     opts=opts,
+                    #     corp_size=corp_size
+                    # )
+                    # self.state_saver.serialize()
+                    # logger.info("saved partials_list and opts to state (after disk probe)")
 
                     logger.info(F"Time for disk probe: {time.time()-total_start}")
                     logger.info(f"Starting from query_id: {i}")
@@ -746,7 +746,8 @@ class GreedyBaseline_submodlib(BaseE2E):
 
                 self.state_saver.pack_state(
                     query_batch_index=i,
-                    partials_list=partials_list,
+                    # partials_list=partials_list,
+                    partials_list=[],
                     opts_done=True,
                     opts=opts,
                     corp_size=None
