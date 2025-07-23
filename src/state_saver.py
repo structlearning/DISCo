@@ -3,6 +3,9 @@ import pickle
 
 import torch
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 class StateSaverBase(object):
     def __init__(self, *args, **kwargs):
@@ -16,11 +19,20 @@ class StateSaverBase(object):
         self.path = f"{self.prefix}/{self.dataset}"
 
     def serialize(self):
-        torch.save(self.state, self.path)
+        """
+        Ensure that the state is saved atomically.
+        This way, if the process crashes while writing, the original file remains intact.
+        """
+        logger.info(f"Saving state to {self.tmp_path}")
+        torch.save(self.state, self.tmp_path)
+        logger.info(f"Moving from {self.tmp_path} to {self.path}")
+        os.replace(self.tmp_path, self.path)
+        logger.info(f"State saved to {self.path}")
 
     def unserialize(self):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.state = torch.load(self.path, map_location=device)
+        self.state = torch.load(self.path, map_location=device, weights_only=False)
+        logger.info(f"State loaded from {self.path}")
 
     def unpack_state(self):
         raise NotImplementedError("This method should be implemented in subclasses.")
@@ -34,7 +46,9 @@ class StateSaverSubmodlib(StateSaverBase):
         submodlib_method = kwargs.get('submodlib_method')
         super().__init__(*args, **kwargs)
 
-        self.path = self.path + f"_submodlib_{submodlib_method}.pt"
+        inter_path = self.path
+        self.path = inter_path + f"_submodlib_{submodlib_method}.pt"
+        self.tmp_path = inter_path + f"_submodlib_{submodlib_method}_tmp.pt"
 
     def pack_state(self, query_batch_index, partials_list, opts_done, opts,
                    corp_size=None):
@@ -50,7 +64,8 @@ class StateSaverSubmodlib(StateSaverBase):
 
     def unserialize(self):
         # The items saved are numpy arrays, so map location should explicitly be 'cpu'
-        self.state = torch.load(self.path, map_location='cpu')
+        self.state = torch.load(self.path, map_location='cpu', weights_only=False)
+        logger.info(f"State loaded from {self.path}")
 
 
 class StateSaverGreedy(StateSaverBase):
@@ -58,7 +73,9 @@ class StateSaverGreedy(StateSaverBase):
         greedy_bs = kwargs.get('greedy_bs')
         super().__init__(*args, **kwargs)
 
-        self.path = self.path + f"_greedy_{greedy_bs}.pt"
+        inter_path = self.path
+        self.path = inter_path + f"_greedy_{greedy_bs}.pt"
+        self.tmp_path = inter_path + f"_greedy_{greedy_bs}_tmp.pt"
 
     def pack_state(self, budget_iter, optvec, opt_indices, opts_scores):
         self.state['budget_iter'] = budget_iter
