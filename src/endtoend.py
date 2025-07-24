@@ -682,7 +682,7 @@ class GreedyBaseline_submodlib(BaseE2E):
                     # with opts computation.
                     # If we quit after the current opts was computed, we continue from the next batch index.
                     if opts_done:
-                        query_batch_index = query_batch_index + 1
+                        query_batch_index = query_batch_index + mega_q_batch_size
                         use_partials_flag = False
                     else:
                         use_partials_flag = True
