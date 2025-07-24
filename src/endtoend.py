@@ -608,7 +608,13 @@ class GreedyBaseline_submodlib(BaseE2E):
         return opts
 
     def run(self):
-        result_path = f"./pickles/results/{self.variety}_{self.dataloader.dataset_name}_{self.config.retriever.type}{self.suffix}_k{self.k}.pkl"
+        result_path_no_suffix = f"./pickles/results/{self.variety}_{self.dataloader.dataset_name}_{self.config.retriever.type}{self.suffix}_k{self.k}"
+
+        if self.config.submodlib.path_suffix:
+            result_path = f"{result_path_no_suffix}_{self.config.submodlib.path_suffix}.pkl"
+        else:
+            result_path = f"{result_path_no_suffix}.pkl"
+
         if os.path.exists(result_path) and False:
             logger.info("Loading existing results")
             return load(result_path)
@@ -653,7 +659,8 @@ class GreedyBaseline_submodlib(BaseE2E):
         
                 q_start += size
                 # opt_for_each_query = submodlib.functions.facilityLocation.FacilityLocationFunction(n=self.config.baseline.bucket_size,mode="dense",separate_rep=True,n_rep=len(qvec),sijs=partial_chamfer)
-                result = opt_for_each_query.maximize(budget=self.k,stopIfZeroGain=True,optimizer=self.optimizer)
+                result = opt_for_each_query.maximize(budget=self.k,stopIfZeroGain=self.config.submodlib.stop_if_zero_gain,
+                                                     optimizer=self.optimizer)
                 opts.append([i[0] for i in result])
         else: # mode = disk
             query_sizes = self.embedder.qmasks.sum(dim=-1)
@@ -735,9 +742,10 @@ class GreedyBaseline_submodlib(BaseE2E):
                     partial = np.concatenate([elem[:,q_start:q_start+size]for elem in partials_list],axis=0)
                     opt_for_each_query = submodlib.functions.facilityLocation.FacilityLocationFunction(n=corp_size,mode="dense",separate_rep=True,n_rep=size,sijs=partial.T)
 
-                    q_start += size                    
-                    result = opt_for_each_query.maximize(budget=self.k,stopIfZeroGain=True,optimizer=self.optimizer)
-                    
+                    q_start += size
+                    result = opt_for_each_query.maximize(budget=self.k,stopIfZeroGain=self.config.submodlib.stop_if_zero_gain,
+                                                         optimizer=self.optimizer)
+
                     opts.append([i[0] for i in result])
                     q_end_time = time.time()
                     logger.info(f"Total time taken for query {query_id}: {q_end_time-q_start_time} seconds")
