@@ -350,7 +350,6 @@ class ColBERTEmbedder(BERTEmbedder):
         
         self.cembs = torch.nn.functional.normalize(self.cembs,dim=-1,p=2) 
         
-                
     def get_corpus(self, indices, padding=330):
         return super().get_corpus(indices, padding)
     def get_corpus_by_batch(self, device, start=0):
