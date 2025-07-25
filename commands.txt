@@ -1,3 +1,9 @@
+########################
+# GENERATING MUVERA FDE#
+########################
+
+CUDA_VISIBLE_DEVICES=3 python3 -m src.cmuvera data.dataset_name="scifact" overwrite_index=False index=False augment=True dbl_norm=True method="muvera"
+
 ##################
 #INDEXING VARIANTS
 ##################
@@ -24,7 +30,6 @@ CUDA_VISIBLE_DEVICES=1 python3 -m src.colbert_embs data.dataset_name="scifact" o
 
 
 
-
 ################
 #SEARCH VARIANTS
 ################
@@ -43,5 +48,3 @@ CUDA_VISIBLE_DEVICES=1 python3 -m src.colbert_embs data.dataset_name="scifact" o
 
 #DOUBLE AUGMENTED SEARCH
 CUDA_VISIBLE_DEVICES=1 python3 -m src.colbert_embs data.dataset_name="scifact" overwrite_index=False index=False augment=True dbl_norm=True method="augmented"
-
-
