@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
     
 def get_muvera(config, colbert_config):
-    if config.muvera.type == "base":
+    if config.muvera.type == "BERT":
         return MUVERA(config, colbert_config)
     else:
         raise ValueError("Invalid variety")
@@ -81,11 +81,17 @@ class MUVERA:
             self.compressed_size = self.config.compress_dim
             self.compression_mode = self.config.compression_mode
 
-        self.variety = f"base"
         self.embedder = ColBERTEmbedder(self.global_config.embedder)
         self.k = self.global_config.k
-    
-    def _RH_augmentation_corpus(self,embs):
+        self.dataset_name = self.global_config.data.dataset_name
+        self.type = self.config.type
+
+        self.prefix_str = f"./experiments/{self.dataset_name}/{self.type}"
+        suffix_str = f"compressed_{self.global_config.lin_dim}"
+        self.embedding_parent_dir = f"{self.prefix_str}/corpus/{suffix_str}"
+        self.status_file  = f"{self.prefix_str}/corpus/status.json"
+
+    def _RH_augmentation_corpus(self,embs,ret_masks=True):
         # NOTE : INDRA
         if self.colbert_config.dbl_norm:
             embs[:,:,-1] = 0
@@ -116,9 +122,14 @@ class MUVERA:
             signs[signs == 0] = 1
             reflect = signs.unsqueeze(-1)*embs
             augmented_embs.append(torch.cat([embs, reflect], dim=-1))
-            new_masks.append(self.embedder.cmasks)
-        
-        return torch.cat(augmented_embs, dim = 0), torch.cat(new_masks, dim=0)
+
+            if ret_masks:
+                new_masks.append(self.embedder.cmasks)
+
+        if ret_masks:
+            return torch.cat(augmented_embs, dim = 0), torch.cat(new_masks, dim=0)
+        else:
+            return torch.cat(augmented_embs, dim = 0)
 
     def generate_fde(self):
         self.embedder.embed_full_dataset(self.dataloader,mode=self.global_config.embedder.mode) 
@@ -137,10 +148,65 @@ class MUVERA:
             print(augmented_cembs.shape)
             print(augmented_cmasks.shape)
 
-        fde_generator = FdeLateInteractionModel(augmented_cembs, augmented_cmasks, 20 ,5, 20)
+        # fde_generator = FdeLateInteractionModel(augmented_cembs, augmented_cmasks, 20 ,5, 20)
+        fde_generator = FdeLateInteractionModel(augmented_cembs, augmented_cmasks, self.config.num_repetitions,
+                                                self.config.num_simhash_projections,
+                                                self.config.projection_dimension,
+                                                self.config.final_projection_dimension)
         fde = fde_generator.encode()
 
         print(fde.shape)
+
+    def dump_fde_to_disk(self):
+        """
+        Load ColBERT embeddings from disk, encode using Muvera and save FDE to disk.
+        Saves two sets of embeddings to disk: Muvera applied on ColBERT embeddings and Muvera applied on ColBERT embeddings with RH augmentation.
+        """
+        assert os.path.exists(self.embedding_parent_dir), f"Embedding directory {self.embedding_parent_dir} does not exist."
+        muvera_path = f"{self.prefix_str}/corpus/compressed_muvera_{self.global_config.lin_dim}"
+        muvera_aug_path = f"{self.prefix_str}/corpus/compressed_muvera_aug_{self.global_config.lin_dim}"
+
+        os.makedirs(muvera_path, exist_ok=True)
+        os.makedirs(muvera_aug_path, exist_ok=True)
+
+        embed_filenames = os.listdir(self.embedding_parent_dir)
+
+        set_seed(self.global_config.baseline.seed)
+
+        for filename in tqdm(embed_filenames):
+            embs_dict = torch.load(os.path.join(self.embedding_parent_dir, filename))
+            embs_dict_final = {}
+            for key, value in embs_dict.items():
+                if key != "embs_compressed":
+                embs_dict_final[key] = value
+
+            cembs = embs_dict["embs_compressed"]
+
+            with torch.no_grad():
+                augmented_cembs = self._RH_augmentation_corpus(cembs, ret_masks=False)
+                augmented_cembs = torch.nn.functional.normalize(augmented_cembs, p=2, dim=2)
+                augmented_cembs = augmented_cembs.half()
+
+            # XXX: Don't send masks to FDE generator for now
+            fde_generator_clean = FdeLateInteractionModel(cembs, None, self.config.num_repetitions,
+                                                          self.config.num_simhash_projections,
+                                                          self.config.projection_dimension,
+                                                          self.config.final_projection_dimension)
+            fde_generator_aug = FdeLateInteractionModel(augmented_cembs, None, self.config.num_repetitions,
+                                                        self.config.num_simhash_projections,
+                                                        self.config.projection_dimension,
+                                                        self.config.final_projection_dimension)
+
+            fde_clean = fde_generator_clean.encode()
+            fde_aug = fde_generator_aug.encode()
+
+            embs_dict_final["embs_muvera"] = fde_clean
+            torch.save(embs_dict_final, os.path.join(muvera_path, filename))
+
+            embs_dict_final["embs_muvera_aug"] = fde_aug
+            torch.save(embs_dict_final, os.path.join(muvera_aug_path, filename))
+
+            logger.info(f"Saved Muvera embeddings to {muvera_path} and {muvera_aug_path} for file {filename}")
 
 if __name__=="__main__":
     from omegaconf import OmegaConf
@@ -156,4 +222,8 @@ if __name__=="__main__":
 
     # Run FDE Generation
     fde_gen = get_muvera(config, colbert_config)
-    fde_gen.generate_fde()
+
+    if config.embedder.mode == "mem":
+        fde_gen.generate_fde()
+    elif config.embedder.mode == "disk":
+        fde_gen.dump_fde_to_disk()
