@@ -22,11 +22,8 @@ def get_muvera(config, colbert_config):
     
 # Wrapper to calculate MUVERA FDE
 class FdeLateInteractionModel():
-    def __init__(self, cembs, cmasks, num_repetitions: int, num_simhash_projections: int, projection_dimension: int, final_projection_dimension: int | None = None, seed: int = 1221, **kwargs):
+    def __init__(self, num_repetitions: int, num_simhash_projections: int, projection_dimension: int, final_projection_dimension: int | None = None, seed: int = 1221, **kwargs):
         super().__init__()  # empty init for Wrapper
-
-        self.cembs = cembs
-        self.cmasks = cmasks
 
         # query_config = muvfde.fixed_dimensional_encoding_config()
         # query_config.set_encoding_type(muvfde.encoding_type.DEFAULT_SUM)
@@ -50,18 +47,25 @@ class FdeLateInteractionModel():
         # self.q_cfg = query_config
         self.d_cfg = doc_config
 
-    def encode(self) -> np.ndarray:
+    def encode(self, cembs) -> np.ndarray:
         # pick the right config
         cfg = self.d_cfg
         # compress each [seq_len × dim] matrix → [fde_dim]
         fde_out = []
-        for mat in tqdm(self.cembs, desc="Encoding Corpus embeddings"):
+        for mat in tqdm(cembs, desc="Encoding Corpus embeddings"):
             fde_out.append(
                 muvfde.generate_fixed_dimensional_encoding(
                     mat.cpu().to(torch.float32), cfg
                 )
             )
         return np.stack(fde_out, axis=0)
+
+    def encode_single_corpus_item(self, cemb) -> np.ndarray:
+        # pick the right config
+        cfg = self.d_cfg
+        return muvfde.generate_fixed_dimensional_encoding(
+            cemb.cpu().to(torch.float32), cfg
+        )
 
     def similarity(self, a: np.ndarray, b: np.ndarray) -> torch.Tensor:
         return torch.from_numpy(a @ b.T)
@@ -89,6 +93,7 @@ class MUVERA:
         self.prefix_str = f"./experiments/{self.dataset_name}/{self.type}"
         suffix_str = f"compressed_{self.global_config.lin_dim}"
         self.embedding_parent_dir = f"{self.prefix_str}/corpus/{suffix_str}"
+        self.masks_parent_dir = f"{self.prefix_str}/corpus/masks"
         self.status_file  = f"{self.prefix_str}/corpus/status.json"
 
     def _RH_augmentation_corpus(self,embs,ret_masks=True):
@@ -161,6 +166,9 @@ class MUVERA:
         """
         Load ColBERT embeddings from disk, encode using Muvera and save FDE to disk.
         Saves two sets of embeddings to disk: Muvera applied on ColBERT embeddings and Muvera applied on ColBERT embeddings with RH augmentation.
+
+        Note: To deal with padded tokens, we must manually filter them out before passing them onto MUVERA.
+        This means we cannot pass a batch of corpus embeddings, and have to run a loop over each corpus item.
         """
         assert os.path.exists(self.embedding_parent_dir), f"Embedding directory {self.embedding_parent_dir} does not exist."
         muvera_path = f"{self.prefix_str}/corpus/compressed_muvera_{self.global_config.lin_dim}"
@@ -173,42 +181,67 @@ class MUVERA:
 
         set_seed(self.global_config.baseline.seed)
 
+        fde_generator_clean = FdeLateInteractionModel(self.config.num_repetitions,
+                                                      self.config.num_simhash_projections,
+                                                      self.config.num_simhash_projections,
+                                                      self.config.projection_dimension,
+                                                      self.config.final_projection_dimension)
+        fde_generator_aug = FdeLateInteractionModel(self.config.num_repetitions,
+                                                    self.config.num_simhash_projections,
+                                                    self.config.projection_dimension,
+                                                    self.config.final_projection_dimension)
+
         for filename in tqdm(embed_filenames):
             embs_dict = torch.load(os.path.join(self.embedding_parent_dir, filename))
+            masks_dict = torch.load(os.path.join(self.masks_parent_dir, filename))
+
             embs_dict_final = {}
             for key, value in embs_dict.items():
                 if key != "embs_compressed":
                     embs_dict_final[key] = value
 
             cembs = embs_dict["embs_compressed"]
+            cmasks = masks_dict["masks"]
+            print(cmasks.shape)
 
-            if not self.global_config.augment:
-                # XXX: Don't send masks to FDE generator for now
+            if self.global_config.augment:
+                with torch.no_grad():
+                    augmented_cembs = self._RH_augmentation_corpus(cembs, ret_masks=False)
+                    augmented_cembs = torch.nn.functional.normalize(augmented_cembs, p=2, dim=2)
+                    cembs = augmented_cembs.half()
+                    # 8 * |C| x seq_len
+                    cmasks = cmasks.repeat_interleave(self.colbert_config.num_rh_augment, dim=0)
+                    assert cmasks.shape[0] == cembs.shape[0], \
+                        f"cmasks shape {cmasks.shape} does not match cembs shape {cembs.shape} after augmentation"
+            else:
                 cembs = cembs.half()
-                fde_generator_clean = FdeLateInteractionModel(cembs, None, self.config.num_repetitions,
-                                                            self.config.num_simhash_projections,
-                                                            self.config.projection_dimension,
-                                                            self.config.final_projection_dimension)
-                fde_clean = fde_generator_clean.encode()
-                embs_dict_final["embs_muvera"] = fde_clean
+
+            cembs_muvera = []
+
+            for cidx, cemb in tqdm(enumerate(cembs), desc=f"Processing {filename} Corpus Embeddings"):
+                cmask = cmasks[cidx]
+                cemb = cemb[cmask]  # Filter out padded tokens
+
+                if not self.global_config.augment:
+                    fde_clean = fde_generator_clean.encode_single_corpus_item(cemb)
+                    cembs_muvera.append(fde_clean)
+
+                else:
+                    fde_aug = fde_generator_aug.encode_single_corpus_item(cemb)
+                    cembs_muvera.append(fde_aug)
+
+            cembs_muvera = np.stack(cembs_muvera, axis=0)
+            if not self.global_config.augment:
+                embs_dict_final["embs_muvera"] = cembs_muvera
                 torch.save(embs_dict_final, os.path.join(muvera_path, filename))
 
                 logger.info(f"Saved Muvera embeddings to {muvera_path} for file {filename}")
             else:
-                with torch.no_grad():
-                    augmented_cembs = self._RH_augmentation_corpus(cembs, ret_masks=False)
-                    augmented_cembs = torch.nn.functional.normalize(augmented_cembs, p=2, dim=2)
-                    augmented_cembs = augmented_cembs.half()
-
-                fde_generator_aug = FdeLateInteractionModel(augmented_cembs, None, self.config.num_repetitions,
-                                                            self.config.num_simhash_projections,
-                                                            self.config.projection_dimension,
-                                                            self.config.final_projection_dimension)
-                fde_aug = fde_generator_aug.encode()
-                embs_dict_final["embs_muvera_aug"] = fde_aug
+                embs_dict_final["embs_muvera_aug"] = cembs_muvera
                 torch.save(embs_dict_final, os.path.join(muvera_aug_path, filename))
 
                 logger.info(f"Saved Muvera embeddings to {muvera_aug_path} for file {filename}")
+
 
 if __name__=="__main__":
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
