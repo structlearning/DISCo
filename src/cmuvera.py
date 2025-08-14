@@ -116,7 +116,7 @@ class MUVERA:
                 torch.save(self.RH, filename)
             else:
                 assert os.path.exists(filename)
-                self.RH = torch.load(filename).to("cpu")
+                self.RH = torch.load(filename)
                     
             signs = torch.sign(embs @ self.RH)
             signs[signs == 0] = 1
@@ -178,44 +178,47 @@ class MUVERA:
             embs_dict_final = {}
             for key, value in embs_dict.items():
                 if key != "embs_compressed":
-                embs_dict_final[key] = value
+                    embs_dict_final[key] = value
 
             cembs = embs_dict["embs_compressed"]
 
-            with torch.no_grad():
-                augmented_cembs = self._RH_augmentation_corpus(cembs, ret_masks=False)
-                augmented_cembs = torch.nn.functional.normalize(augmented_cembs, p=2, dim=2)
-                augmented_cembs = augmented_cembs.half()
+            if not self.global_config.augment:
+                # XXX: Don't send masks to FDE generator for now
+                cembs = cembs.half()
+                fde_generator_clean = FdeLateInteractionModel(cembs, None, self.config.num_repetitions,
+                                                            self.config.num_simhash_projections,
+                                                            self.config.projection_dimension,
+                                                            self.config.final_projection_dimension)
+                fde_clean = fde_generator_clean.encode()
+                embs_dict_final["embs_muvera"] = fde_clean
+                torch.save(embs_dict_final, os.path.join(muvera_path, filename))
 
-            # XXX: Don't send masks to FDE generator for now
-            fde_generator_clean = FdeLateInteractionModel(cembs, None, self.config.num_repetitions,
-                                                          self.config.num_simhash_projections,
-                                                          self.config.projection_dimension,
-                                                          self.config.final_projection_dimension)
-            fde_generator_aug = FdeLateInteractionModel(augmented_cembs, None, self.config.num_repetitions,
-                                                        self.config.num_simhash_projections,
-                                                        self.config.projection_dimension,
-                                                        self.config.final_projection_dimension)
+                logger.info(f"Saved Muvera embeddings to {muvera_path} for file {filename}")
+            else:
+                with torch.no_grad():
+                    augmented_cembs = self._RH_augmentation_corpus(cembs, ret_masks=False)
+                    augmented_cembs = torch.nn.functional.normalize(augmented_cembs, p=2, dim=2)
+                    augmented_cembs = augmented_cembs.half()
 
-            fde_clean = fde_generator_clean.encode()
-            fde_aug = fde_generator_aug.encode()
+                fde_generator_aug = FdeLateInteractionModel(augmented_cembs, None, self.config.num_repetitions,
+                                                            self.config.num_simhash_projections,
+                                                            self.config.projection_dimension,
+                                                            self.config.final_projection_dimension)
+                fde_aug = fde_generator_aug.encode()
+                embs_dict_final["embs_muvera_aug"] = fde_aug
+                torch.save(embs_dict_final, os.path.join(muvera_aug_path, filename))
 
-            embs_dict_final["embs_muvera"] = fde_clean
-            torch.save(embs_dict_final, os.path.join(muvera_path, filename))
-
-            embs_dict_final["embs_muvera_aug"] = fde_aug
-            torch.save(embs_dict_final, os.path.join(muvera_aug_path, filename))
-
-            logger.info(f"Saved Muvera embeddings to {muvera_path} and {muvera_aug_path} for file {filename}")
+                logger.info(f"Saved Muvera embeddings to {muvera_aug_path} for file {filename}")
 
 if __name__=="__main__":
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     from omegaconf import OmegaConf
     os.makedirs("logs/muvera_fde_gen",exist_ok=True)
     
     file_config = OmegaConf.load("configs/config.yaml")
     colbert_config = OmegaConf.load("configs/colbert.yaml")
     cli_config = OmegaConf.from_cli()
-    
+
     config = OmegaConf.merge(file_config,cli_config)
     
     logging.basicConfig(filename=f'logs/muvera_fde_gen/{config.method}_{config.data.dataset_name}.log', level=logging.INFO, format='%(asctime)s %(message)s')
