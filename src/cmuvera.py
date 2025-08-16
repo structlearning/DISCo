@@ -1,10 +1,11 @@
+from loguru import logger
 import numpy as np
 import muvfde
 import torch
 import copy
 from src.dataloader import get_dataloader
 import torch
-import os,pickle
+import os,pickle,socket,sys
 import logging
 from .utils import set_seed, load, save, hamming_distance
 from torch import Tensor
@@ -172,12 +173,25 @@ class MUVERA:
         """
         assert os.path.exists(self.embedding_parent_dir), f"Embedding directory {self.embedding_parent_dir} does not exist."
         muvera_path = f"{self.prefix_str}/corpus/compressed_muvera_{self.global_config.lin_dim}"
+        muvera_full_path = f"{self.prefix_str}/corpus/compressed_muvera_full_{self.global_config.lin_dim}"
         muvera_aug_path = f"{self.prefix_str}/corpus/compressed_muvera_aug_{self.global_config.lin_dim}"
 
         os.makedirs(muvera_path, exist_ok=True)
+        os.makedirs(muvera_full_path, exist_ok=True)
         os.makedirs(muvera_aug_path, exist_ok=True)
 
-        embed_filenames = os.listdir(self.embedding_parent_dir)
+        embed_filenames = [x for x in os.listdir(self.embedding_parent_dir) if x.endswith("pkl")]
+
+        if self.global_config.augment:
+            current_filenames = [x for x in os.listdir(muvera_aug_path) if x.endswith("pkl")]
+        else:
+            if self.config.half_embs:
+                current_filenames = [x for x in os.listdir(muvera_path) if x.endswith("pkl")]
+            else:
+                current_filenames = [x for x in os.listdir(muvera_full_path) if x.endswith("pkl")]
+
+        remaining = list(set(embed_filenames) - set(current_filenames))
+        embed_filenames = remaining
 
         set_seed(self.global_config.baseline.seed)
 
@@ -192,8 +206,8 @@ class MUVERA:
                                                     self.config.final_projection_dimension)
 
         for filename in tqdm(embed_filenames):
-            embs_dict = torch.load(os.path.join(self.embedding_parent_dir, filename))
-            masks_dict = torch.load(os.path.join(self.masks_parent_dir, filename))
+            embs_dict = torch.load(os.path.join(self.embedding_parent_dir, filename), weights_only=False)
+            masks_dict = torch.load(os.path.join(self.masks_parent_dir, filename), weights_only=False)
 
             embs_dict_final = {}
             for key, value in embs_dict.items():
@@ -202,7 +216,6 @@ class MUVERA:
 
             cembs = embs_dict["embs_compressed"]
             cmasks = masks_dict["masks"]
-            print(cmasks.shape)
 
             if self.global_config.augment:
                 with torch.no_grad():
@@ -214,7 +227,8 @@ class MUVERA:
                     assert cmasks.shape[0] == cembs.shape[0], \
                         f"cmasks shape {cmasks.shape} does not match cembs shape {cembs.shape} after augmentation"
             else:
-                cembs = cembs.half()
+                if self.config.half_embs:
+                    cembs = cembs.half()
 
             cembs_muvera = []
 
@@ -233,9 +247,13 @@ class MUVERA:
             cembs_muvera = np.stack(cembs_muvera, axis=0)
             if not self.global_config.augment:
                 embs_dict_final["embs_muvera"] = cembs_muvera
-                torch.save(embs_dict_final, os.path.join(muvera_path, filename))
+                if self.config.half_embs:
+                    torch.save(embs_dict_final, os.path.join(muvera_path, filename))
+                    logger.info(f"Saved Muvera embeddings to {muvera_path} for file {filename}")
+                else:
+                    torch.save(embs_dict_final, os.path.join(muvera_full_path, filename))
+                    logger.info(f"Saved Muvera embeddings to {muvera_full_path} for file {filename}")
 
-                logger.info(f"Saved Muvera embeddings to {muvera_path} for file {filename}")
             else:
                 embs_dict_final["embs_muvera_aug"] = cembs_muvera
                 torch.save(embs_dict_final, os.path.join(muvera_aug_path, filename))
@@ -253,9 +271,12 @@ if __name__=="__main__":
     cli_config = OmegaConf.from_cli()
 
     config = OmegaConf.merge(file_config,cli_config)
-    
-    logging.basicConfig(filename=f'logs/muvera_fde_gen/{config.method}_{config.data.dataset_name}.log', level=logging.INFO, format='%(asctime)s %(message)s')
 
+    # logging.basicConfig(filename=f'logs/muvera_fde_gen/{config.method}_{config.data.dataset_name}.log', level=logging.INFO, format='%(asctime)s %(message)s')
+    logger.info(f"COMMAND: {' '.join(sys.argv)}")
+    logger.info(f"Running MUVERA FDE Generation with config: {OmegaConf.to_yaml(config)}")
+    logger.info(f"This run is executing on {socket.gethostname()}")
+    logger.info(f"PID: {os.getpid()}")
     # Run FDE Generation
     fde_gen = get_muvera(config, colbert_config)
 

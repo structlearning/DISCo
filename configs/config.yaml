@@ -44,6 +44,7 @@ muvera:
   num_simhash_projections: 5
   projection_dimension: 20
   final_projection_dimension: 2560
+  fresh_start: False
 
 submodlib:
   path_suffix: null
