@@ -831,8 +831,11 @@ if __name__=="__main__":
 
     config = OmegaConf.merge(file_config,cli_config)
 
-    logging.basicConfig(filename=f'logs/end_to_end/{config.method}_{config.data.dataset_name}_{config.retriever.type}.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(process)d - %(message)s')
-    # logger.log(config)
+    if config.method == "sml":
+        logging.basicConfig(filename=f'logs/end_to_end/{config.method}_{config.submodlib.optimizer}_{config.data.dataset_name}_{config.retriever.type}.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(process)d - %(message)s')
+    else:
+        logging.basicConfig(filename=f'logs/end_to_end/{config.method}_{config.data.dataset_name}_{config.retriever.type}.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(process)d - %(message)s')
+    logger.log(config)
 
     retriever = get_method(config)
     retriever.run()

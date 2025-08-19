@@ -370,6 +370,9 @@ class ColBERTAugmented(ColBERTBaseE2E):
                         inds = pickle.load(f)
                 else:
                     print("File not found. Running search...")
+                    # TODO: Only this changes for MUVERA, rest can be copy pasted.
+                    # The search process is the same.
+                    # embedder.load_full_dataset and embedder.get_corpus will perhaps change (include MUVERA encodings)
                     inds = self.search(qembs, qmasks, k=self.config.colbert_topk)
                     # if self.config.embedder.mode=="mem":
                     #     with open(f"./mem_query_iter_{i}.pkl", "wb") as f:
@@ -730,10 +733,12 @@ if __name__=="__main__":
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(process)d - %(message)s',
         handlers=[
-            logging.FileHandler(f'logs/colbert/{conf.method}_{conf.data.dataset_name}_{conf.retriever.type}.log'),
+            logging.FileHandler(f'logs/colbert/{conf.method}_{conf.data.dataset_name}_{conf.retriever.type}_pid:{os.getpid()}.log'),
             logging.StreamHandler()
         ]
     )
+    logger.info(conf)
+
     ## IMPORTANT: switching between plaid and base
     if conf.embedder.mv_type == "colbertv2-plaid":
         from colbert.infra import Run, RunConfig, ColBERTConfig

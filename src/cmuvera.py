@@ -12,9 +12,7 @@ from torch import Tensor
 from .embedder import ColBERTEmbedder
 from tqdm import tqdm
 
-logger = logging.getLogger(__name__)
 
-    
 def get_muvera(config, colbert_config):
     if config.muvera.type == "BERT":
         return MUVERA(config, colbert_config)
@@ -271,6 +269,7 @@ if __name__=="__main__":
     cli_config = OmegaConf.from_cli()
 
     config = OmegaConf.merge(file_config,cli_config)
+    logger.add(f"logs/muvera_fde_gen/muvera_{config.data.dataset_name}_{os.getpid()}.log", level="INFO")
 
     # logging.basicConfig(filename=f'logs/muvera_fde_gen/{config.method}_{config.data.dataset_name}.log', level=logging.INFO, format='%(asctime)s %(message)s')
     logger.info(f"COMMAND: {' '.join(sys.argv)}")
