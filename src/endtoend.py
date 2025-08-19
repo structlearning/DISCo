@@ -660,7 +660,7 @@ class GreedyBaseline_submodlib(BaseE2E):
                 q_start += size
                 # opt_for_each_query = submodlib.functions.facilityLocation.FacilityLocationFunction(n=self.config.baseline.bucket_size,mode="dense",separate_rep=True,n_rep=len(qvec),sijs=partial_chamfer)
                 result = opt_for_each_query.maximize(budget=self.k,stopIfZeroGain=self.config.submodlib.stop_if_zero_gain,
-                                                     optimizer=self.optimizer)
+                                                     optimizer=self.optimizer, epsilon=self.config.submodlib.epsilon)
                 opts.append([i[0] for i in result])
         else: # mode = disk
             query_sizes = self.embedder.qmasks.sum(dim=-1)
@@ -744,7 +744,7 @@ class GreedyBaseline_submodlib(BaseE2E):
 
                     q_start += size
                     result = opt_for_each_query.maximize(budget=self.k,stopIfZeroGain=self.config.submodlib.stop_if_zero_gain,
-                                                         optimizer=self.optimizer)
+                                                         optimizer=self.optimizer, epsilon=self.config.submodlib.epsilon)
 
                     opts.append([i[0] for i in result])
                     q_end_time = time.time()

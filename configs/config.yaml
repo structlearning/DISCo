@@ -49,6 +49,7 @@ muvera:
 submodlib:
   path_suffix: null
   stop_if_zero_gain: True
+  epsilon: 0.1 # ltl, lazy and stochastic greedy
 
 load_state: False # if True, load the state from the path specified in the state_saver
 
