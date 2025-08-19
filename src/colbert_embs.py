@@ -415,7 +415,7 @@ class ColBERTAugmented(ColBERTBaseE2E):
                         max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
                             qembs[q_id].unsqueeze(0), qmasks[q_id].unsqueeze(0), optvec.unsqueeze(-1)[q_id].unsqueeze(0), cemb.unsqueeze(0), cmask.unsqueeze(0)
                         )
-                        real_indices = inds[q_id, max_sim_indices]
+                        real_indices = inds[q_id, max_sim_indices.cpu()]
                         optvec[q_id] = torch.maximum(optvec[q_id], max_sim_partial.squeeze(0).to(optvec.device))
                         opt_scores[q_id,i] = max_sim_scores
                         opt_inds[q_id,i] = real_indices
@@ -554,7 +554,7 @@ class ColBERT_internal(ColBERTAugmented):
                 max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
                     qembs, qmasks, optvec.unsqueeze(-1), cembs, cmasks
                 )
-                real_indices = inds[torch.arange(inds.size(0)), max_sim_indices]
+                real_indices = inds[torch.arange(inds.size(0)), max_sim_indices.cpu()]
                 optvec = torch.maximum(optvec, max_sim_partial.to(optvec.device))
                 opt_scores[:,i].copy_(max_sim_scores)
                 opt_inds[:,i].copy_(real_indices)
