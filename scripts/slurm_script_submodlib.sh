@@ -21,4 +21,4 @@ cd ~/CMUVERA_IR_ref
 echo "Arguments received: $1, $2, $3, $4"
 
 # Run your command
-python3 -m src.endtoend k=15 method='sml' data.dataset_name=$1 embedder.mode="disk" submodlib.optimizer=$2 embedder.mv_type='colbertv2-plaid' load_state=$3 submodlib.path_suffix=$4 submodlib.stop_if_zero_gain=$5
+python3 -m src.endtoend k=15 method='sml' data.dataset_name=$1 embedder.mode="disk" submodlib.optimizer=$2 embedder.mv_type='colbertv2-plaid' load_state=$3 submodlib.path_suffix=$4 submodlib.stop_if_zero_gain=$5 submodlib.epsilon=$6
