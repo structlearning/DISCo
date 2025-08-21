@@ -221,8 +221,10 @@ class Searcher:
     def rank_modified(self, Q, opt_vec, filter_fn=None, pids=None):
         assert pids is not None, "pids should not be None in rank_modified"
         with torch.inference_mode():
-            
-            pids = torch.tensor(pids, dtype=torch.int32, device=Q.device)
+
+            # Detach and clone pids and avoid initializing a new tensor using the pids tensor
+            # This can lead to bus error problems on NFS/ZFS style filesystems
+            pids = pids.detach().clone().to(dtype=torch.int32, device=Q.device)
             centroid_scores = None
 
             scores, pids = self.ranker.score_pids_modified(self.config, Q, pids, centroid_scores,opt_vec)

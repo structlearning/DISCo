@@ -188,13 +188,13 @@ class MUVERA:
             else:
                 current_filenames = [x for x in os.listdir(muvera_full_path) if x.endswith("pkl")]
 
-        remaining = list(set(embed_filenames) - set(current_filenames))
-        embed_filenames = remaining
+        if not self.config.fresh_start:
+            remaining = list(set(embed_filenames) - set(current_filenames))
+            embed_filenames = remaining
 
         set_seed(self.global_config.baseline.seed)
 
         fde_generator_clean = FdeLateInteractionModel(self.config.num_repetitions,
-                                                      self.config.num_simhash_projections,
                                                       self.config.num_simhash_projections,
                                                       self.config.projection_dimension,
                                                       self.config.final_projection_dimension)
