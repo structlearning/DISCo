@@ -1,8 +1,12 @@
+import numpy as np
+import re
 import torch
 import logging
 import concurrent.futures
 from omegaconf import OmegaConf
 import os, warnings
+
+from src.cmuvera import FdeLateInteractionModel
 from src.dataloader import get_dataloader
 from src.embedder import ColBERTEmbedder
 from src.endtoend import BaseE2E
@@ -12,6 +16,7 @@ from tqdm import tqdm
 
 # from torch_scatter import scatter
 
+import faiss
 from multiprocessing import Pool
 
 from multiset import Multiset as multiset
@@ -155,7 +160,139 @@ class DummyQueryForColbert:
         return range(self.size)
     def provenance(self):
         return f"dummy_provenance_sized{self.size}"
-    
+
+
+class MuveraTopK(ColBERTBaseE2E):
+    def __init__(self, config):
+        super().__init__(config)
+
+        # Load the index
+        self.index_path = f"./experiments/{self.config.data.dataset_name}/muvera_index_{self.config.embedder.emb_dim}.index"
+        if not self.config.index:
+            try:
+                self.index = faiss.read_index(self.index_path)
+            except Exception as e:
+                logger.error(f"Failed to read index from {self.index_path}: {e}")
+
+        self.muvera_query_gen = FdeLateInteractionModel(self.config.muvera.num_repetitions,
+                                                        self.config.muvera.num_simhash_projections,
+                                                        self.config.muvera.projection_dimension,
+                                                        self.config.muvera.final_projection_dimension)
+
+    def index(self):
+        self.index = faiss.IndexFlatIP(self.config.muvera.final_projection_dimension)
+
+        # Load embeddings directly from disk
+        parent_path = f"./experiments/{self.config.data.dataset_name}/BERT/corpus/compressed_muvera_full_{self.config.embedder.emb_dim}"
+        ffs = [x for x in os.listdir(parent_path) if x.endswith(".pkl")]
+
+        # Sort using batch_id and minibatch_id extracted from the filename
+        sorted_files = sorted(
+            ffs,
+            key=lambda name: tuple(map(int, re.findall(r'\d+', name)))
+        )
+
+        embs_all = []
+        for ff in tqdm(sorted_files, desc="Loading Muvera embeddings"):
+            file_path = os.path.join(parent_path, ff)
+            embed_dict = torch.load(file_path, map_location='cpu', weights_only=False)
+            embs = embed_dict['embs_muvera']
+
+            assert embs.shape[1] == self.config.muvera.final_projection_dimension, \
+                f"Embedding dimension mismatch: {embs.shape[1]} != {self.config.muvera.final_projection_dimension}"
+
+            embs_all.append(embs)
+
+        # Safe to do even for larger datasets as the embeddings are single-vector
+        embs_all = np.vstack(embs_all)
+        self.index.add(embs_all)
+
+        faiss.write_index(self.index, self.index_path)
+
+    def run(self):
+        # XXX: copied from colbert iid. refactor later.
+        result_file_path = f"./pickles/results/{self.config.embedder.type}/muvera_iid_{self.config.data.dataset_name}_k{self.config.k}.pkl"
+
+        self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode)
+        qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
+
+        result_ids = self.search(qembs, qmasks, k=self.config.k)
+        print(f"result ids shape : {result_ids.shape}")
+
+        if self.config.embedder.mode =="mem":
+            ## compute real scores with opts
+            cembs, cmasks = self.embedder.get_corpus(result_ids)
+        else:
+            corpus = self.embedder.get_corpus(result_ids)
+            logger.info("All required documents are loaded")
+            cembs = []
+            cmasks = []
+            for q_id in tqdm(range(qembs.shape[0]), desc="Processing queries"):
+                cemb, cmask = corpus[
+                    (q_id * torch.ones(result_ids.shape[1], dtype=torch.long, device=corpus.device)),
+                    torch.arange(result_ids.shape[1], dtype=torch.long, device=corpus.device)
+                ]
+
+                cembs.append(cemb)
+                cmasks.append(cmask)
+            cembs = torch.stack(cembs)
+            cmasks = torch.stack(cmasks)
+
+        # Common code to disk and mem mode
+        ## qembs: 300,64,128, qmasks: 300,64
+        ## cembs: 300,100,330,128, cmasks: 300,100,330
+
+        ## qembs is already masked out, and zeroed out
+        dp = torch.einsum("abc,adec->adbe",qembs,cembs.to(qembs.device))
+        masked = torch.where(cmasks.bool().to(qembs.device).unsqueeze(2),dp,-10)
+        partials = torch.cummax(torch.amax(masked,dim=3),dim=1)[0]
+        result_scores = torch.sum(partials,dim=2)
+
+        save((result_ids, result_scores), result_file_path)
+        return result_ids, result_scores
+
+    def search(self, qembs, qmasks, k):
+        # Muvera FDE generation
+
+        try:
+            qembs_muvera = np.load(f"./pickles/muvera_query_embs_{self.config.data.dataset_name}.npy")
+        except Exception as e:
+            logger.error(f"Failed to load Muvera query embeddings: {e}")
+            logger.info("Generating Muvera query embeddings...")
+
+            qembs_muvera = []
+            for qidx, qemb in tqdm(enumerate(qembs), desc=f"Converting query embeddings to muvera"):
+                qmask = qmasks[qidx]
+                qemb = qemb[qmask]  # Filter out padded tokens
+
+                fde_clean = self.muvera_query_gen.encode_single_item(qemb)
+                qembs_muvera.append(fde_clean)
+
+            qembs_muvera = np.vstack(qembs_muvera)
+            logger.info("Muvera query embeddings generated successfully. Saving to file...")
+            np.save(f"./pickles/muvera_query_embs_{self.config.data.dataset_name}.npy", qembs_muvera)
+
+        logger.info("Searching Muvera index for top-k results...")
+        start = time.time()
+
+        batch_size = 512
+        all_I = []
+        logger.info(f"k = {k}")
+
+        for i in range(0, len(qembs_muvera), batch_size):
+            batch = qembs_muvera[i:i + batch_size]
+            _, I = self.index.search(batch.astype(np.float32), k)
+            all_I.append(I)
+            logger.info(f"Processed batch {i // batch_size + 1} / {int(np.ceil(len(qembs_muvera)/batch_size))}")
+
+        ids = torch.from_numpy(np.vstack(all_I))
+        end = time.time()
+        logger.info(f"Muvera search completed in {end - start:.2f} seconds.")
+
+        # XXX: some rows in ids can have -1 values incase FAISS was not able to find enough neighbors
+        return ids
+
+
 ## Just topk with no augmentation
 class ColBERTBaseline(ColBERTBaseE2E):
     def __init__(self, config):
@@ -190,7 +327,7 @@ class ColBERTBaseline(ColBERTBaseE2E):
         qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
         # KN TODO : add an assert here perhaps
         # KN TODO 2 : we might need batching for larger query sizes
-        
+
         result_ids = self.search(qembs, qmasks, k=self.config.k)
         print(f"result ids shape : {result_ids.shape}")
         
@@ -747,7 +884,12 @@ if __name__=="__main__":
         from colbert_base.infra import Run, RunConfig, ColBERTConfig
         from colbert_base import Indexer, Searcher
 
-    if conf.method == "baseline":
+    if conf.method == "muvera_iid":
+        assert not conf.augment
+        logging.info(f"Running MUVERA iid on ColBERT embeddings with FAISS")
+        obj = MuveraTopK(conf)
+
+    elif conf.method == "baseline":
         assert conf.augment == False
         logging.info(f"Running ColBERT with baseline")
         obj = ColBERTBaseline(conf)

@@ -59,7 +59,7 @@ class FdeLateInteractionModel():
             )
         return np.stack(fde_out, axis=0)
 
-    def encode_single_corpus_item(self, cemb) -> np.ndarray:
+    def encode_single_item(self, cemb) -> np.ndarray:
         # pick the right config
         cfg = self.d_cfg
         return muvfde.generate_fixed_dimensional_encoding(
@@ -235,11 +235,11 @@ class MUVERA:
                 cemb = cemb[cmask]  # Filter out padded tokens
 
                 if not self.global_config.augment:
-                    fde_clean = fde_generator_clean.encode_single_corpus_item(cemb)
+                    fde_clean = fde_generator_clean.encode_single_item(cemb)
                     cembs_muvera.append(fde_clean)
 
                 else:
-                    fde_aug = fde_generator_aug.encode_single_corpus_item(cemb)
+                    fde_aug = fde_generator_aug.encode_single_item(cemb)
                     cembs_muvera.append(fde_aug)
 
             cembs_muvera = np.stack(cembs_muvera, axis=0)
