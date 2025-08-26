@@ -166,4 +166,42 @@ def hamming_distance(x, y):
     bits = ((xor.unsqueeze(-1) >> torch.arange(bit_width, device=xor.device)) & 1)
     logger.info("Hamming distance calculated")
     return bits.sum(dim=-1)
-    
+
+
+import numpy as np
+
+def rowwise_union_padded(arrays, num_rh, k, preserve_order=False):
+    """
+    arrays: list of numpy arrays, each of shape (Q, k), integer dtype
+    preserve_order: if True, keep first-appearance order per row; else sorted
+
+    Returns:
+        out: (Q, max_union_len) int array,
+             padded with the first element of each row
+    """
+    assert len(arrays) == num_rh, f"Expecting exactly {num_rh} arrays"
+    Q = arrays[0].shape[0]
+    for a in arrays:
+        assert a.shape == (Q, k), f"All arrays must be (Q, {k})"
+
+    # Concatenate across axis=1 -> (Q, num_rh * k)
+    stacked = np.concatenate(arrays, axis=1)
+
+    unions = []
+    if preserve_order:
+        for row in stacked:
+            vals, idx = np.unique(row, return_index=True)
+            unions.append(row[np.sort(idx)])  # keep order of first appearance
+    else:
+        for row in stacked:
+            unions.append(np.unique(row))     # sorted
+
+    max_len = max(len(u) for u in unions) if unions else 0
+
+    out = np.empty((Q, max_len), dtype=stacked.dtype)
+    for i, u in enumerate(unions):
+        out[i, :len(u)] = u
+        if len(u) < max_len:
+            out[i, len(u):] = u[0]  # pad with the first element of that row
+
+    return out

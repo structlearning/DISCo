@@ -221,16 +221,17 @@ class MUVERA:
                     augmented_cembs = torch.nn.functional.normalize(augmented_cembs, p=2, dim=2)
                     cembs = augmented_cembs.half()
                     # 8 * |C| x seq_len
-                    cmasks = cmasks.repeat_interleave(self.colbert_config.num_rh_augment, dim=0)
+                    cmasks = cmasks.repeat(self.colbert_config.num_rh_augment, 1)
                     assert cmasks.shape[0] == cembs.shape[0], \
                         f"cmasks shape {cmasks.shape} does not match cembs shape {cembs.shape} after augmentation"
+
             else:
                 if self.config.half_embs:
                     cembs = cembs.half()
 
             cembs_muvera = []
 
-            for cidx, cemb in tqdm(enumerate(cembs), desc=f"Processing {filename} Corpus Embeddings"):
+            for cidx, cemb in enumerate(tqdm(cembs, desc=f"Processing {filename} Corpus Embeddings")):
                 cmask = cmasks[cidx]
                 cemb = cemb[cmask]  # Filter out padded tokens
 

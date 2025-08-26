@@ -6,11 +6,13 @@ import concurrent.futures
 from omegaconf import OmegaConf
 import os, warnings
 
+from colbert.modeling.colbert import AugmentationMixin
+
 from src.cmuvera import FdeLateInteractionModel
 from src.dataloader import get_dataloader
 from src.embedder import ColBERTEmbedder
 from src.endtoend import BaseE2E
-from src.utils import partial_chamfer_sim_batched_with_rerank, save
+from src.utils import partial_chamfer_sim_batched_with_rerank, rowwise_union_padded, save
 import pickle
 from tqdm import tqdm
 
@@ -402,6 +404,219 @@ class ColBERTBaselineWithRerank(ColBERTBaseline):
         save((opt_indices, opts_scores), result_file_path)
         return opt_indices, opts_scores
 
+
+def search_muvera_worker_for_th(qembs_muvera, k, index, rh):
+    logger.info(f"Searching Muvera index {rh} for top-k results...")
+    start = time.time()
+
+    batch_size = 512
+    all_I = []
+    logger.info(f"k = {k}")
+
+    for i in range(0, len(qembs_muvera), batch_size):
+        batch = qembs_muvera[i:i + batch_size]
+        _, I = index.search(batch.astype(np.float32), k)
+        all_I.append(I)
+        logger.info(f"Processed batch {i // batch_size + 1} / {int(np.ceil(len(qembs_muvera)/batch_size))}")
+
+    ids = np.vstack(all_I)
+    end = time.time()
+    logger.info(f"Muvera search on index {rh} completed in {end - start:.2f} seconds.")
+    return ids
+
+
+class MuveraAugmented(ColBERTBaseE2E, AugmentationMixin):
+    def __init__(self, config):
+        super().__init__(config)
+        # XXX: not used directly
+        self.variety = f"{self.mv_type}_aug_n{self.config.colbert.nbits}_d{self.config.embedder.emb_dim}_rh{self.config.num_rh_augment}"
+        # Hacks to use AugmentationMixin
+        self.RH = None
+
+        self.indices = {i: None for i in range(self.config.num_rh_augment)}
+        for i in tqdm(range(self.config.num_rh_augment), desc="Loading Muvera aug indices"):
+            index_path = self._get_index_path(i)
+
+            try:
+                # Loading 8 indices can be very slow, so use IO_FLAG_MMAP.
+                self.indices[i] = faiss.read_index(index_path, faiss.IO_FLAG_MMAP)
+            except Exception as e:
+                logger.error(f"Failed to read index from {index_path}: {e}")
+                logger.info("Please run the indexing step for MuveraAugmented first.")
+                break
+
+        self.muvera_query_gen = FdeLateInteractionModel(self.config.muvera.num_repetitions,
+                                                        self.config.muvera.num_simhash_projections,
+                                                        self.config.muvera.projection_dimension,
+                                                        self.config.muvera.final_projection_dimension)
+
+    def _get_index_path(self, rh):
+        return f"./experiments/{self.config.data.dataset_name}/muvera_index_{self.config.embedder.emb_dim}_rh{rh}.index"
+
+    def augment_and_muvera_encode(self, qembs, qmasks):
+        with torch.no_grad():
+            aug_qembs = []
+
+            for i in range(self.config.num_rh_augment):
+                RH_file = f"./experiments/{self.config.data.dataset_name}/RH.{self.config.embedder.emb_dim}.{i}.pt"
+                augmented_qembs = self._RH_augmentation_query(qembs, RH_file=RH_file, generate_new_rh=False)
+                augmented_qembs = torch.nn.functional.normalize(augmented_qembs, p=2, dim=2)
+                augmented_qembs = augmented_qembs.half()
+                aug_qembs.append(augmented_qembs)
+
+            augmented_qembs = torch.cat(aug_qembs, dim=0)
+            # 8 * |C| x seq_len
+            # masks are the single source of truth for valid/non-validness of
+            # query tokens. So can't run an assertion based on checking if
+            # query token embeddings are fully zeroed out or not. This is done
+            # on corpus side however.
+            qmasks = qmasks.repeat(self.config.num_rh_augment, 1)
+            assert qmasks.shape[0] == augmented_qembs.shape[0], \
+                f"qmasks shape {qmasks.shape} does not match qembs shape {qembs.shape} after augmentation"
+
+        try:
+            qembs_muvera = np.load(f"./pickles/muvera_aug_query_embs_{self.config.data.dataset_name}.npy")
+        except Exception as e:
+            logger.error(f"Failed to load Muvera augmented query embeddings: {e}")
+            logger.info("Generating Muvera augmented query embeddings...")
+
+            qembs_muvera = []
+            for qidx, qemb in enumerate(tqdm(augmented_qembs, desc=f"Converting augmented query embeddings to muvera")):
+                qmask = qmasks[qidx]
+                qemb = qemb[qmask]  # Filter out padded tokens
+
+                fde_aug = self.muvera_query_gen.encode_single_item(qemb)
+                qembs_muvera.append(fde_aug)
+
+            qembs_muvera = np.vstack(qembs_muvera)
+
+            logger.info("Muvera augmented query embeddings generated successfully. Saving to file...")
+            np.save(f"./pickles/muvera_aug_query_embs_{self.config.data.dataset_name}.npy", qembs_muvera)
+
+        return qembs_muvera
+
+    def index(self):
+        for i in range(self.config.num_rh_augment):
+            self.indices[i] = faiss.IndexFlatIP(self.config.muvera.final_projection_dimension)
+
+        # Load embeddings directly from disk
+        parent_path = f"./experiments/{self.config.data.dataset_name}/BERT/corpus/compressed_muvera_aug_{self.config.embedder.emb_dim}"
+        ffs = [x for x in os.listdir(parent_path) if x.endswith(".pkl")]
+
+        # Sort using batch_id and minibatch_id extracted from the filename
+        sorted_files = sorted(
+            ffs,
+            key=lambda name: tuple(map(int, re.findall(r'\d+', name)))
+        )
+
+        embs_map = {i: [] for i in range(self.config.num_rh_augment)}
+        for ff in tqdm(sorted_files, desc="Loading Muvera embeddings"):
+
+            file_path = os.path.join(parent_path, ff)
+            embed_dict = torch.load(file_path, map_location='cpu', weights_only=False)
+            embs = embed_dict['embs_muvera_aug']
+
+            assert embs.shape[1] == self.config.muvera.final_projection_dimension, \
+                f"Embedding dimension mismatch: {embs.shape[1]} != {self.config.muvera.final_projection_dimension}"
+
+            num_rh = self.config.num_rh_augment
+            embs_per_rh = embs.shape[0] // num_rh  # should be exact
+
+            for rh in range(num_rh):
+                start = rh * embs_per_rh
+                end = (rh + 1) * embs_per_rh
+                embs_map[rh].append(embs[start:end])
+
+        # Index and write
+        for key in tqdm(embs_map, desc="Writing indices"):
+            index_path = self._get_index_path(key)
+            merged_embs = np.vstack(embs_map[key])
+            self.indices[key].add(merged_embs)
+            faiss.write_index(self.indices[key], index_path)
+            logger.info(f"Index for RH {key} written to {index_path}")
+
+    def run(self):
+        # XXX: Copied from ColBERTAugmented. Refactor later.
+        result_file_path = f"./pickles/results/{self.config.embedder.type}/muvera_aug_{self.config.data.dataset_name}_k{self.config.k}.pkl"
+        
+        self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode)
+        
+        qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
+        optvec = -torch.ones_like(qmasks,dtype=qembs.dtype) * 2 # Just to be safe
+        opt_scores = torch.zeros((qmasks.size(0),self.config.k),dtype=torch.float32)
+        opt_inds = -torch.ones((qmasks.size(0),self.config.k),dtype=torch.int64)
+
+        # you can add batching here
+        with torch.inference_mode():
+            for i in tqdm(range(self.config.k)):
+                logger.info(f"Running iteration {i+1}/{self.config.k}")
+                qembs[:,:,-1] = optvec
+
+                inds = self.search(qembs, qmasks, k=self.config.colbert_topk)
+                logger.info(f"Search Done - iter {i+1}/{self.config.k}")
+
+                if self.config.embedder.mode =="mem":
+                    cembs, cmasks = self.embedder.get_corpus(inds)
+                    # with open(f"./mem_corpus_iter_{i}.pkl", "wb") as f:
+                    #     pickle.dump((cembs, cmasks), f)
+                   
+                    max_sim_partial, max_sim_indices, max_sim_scores =  (
+                        qembs, qmasks, optvec.unsqueeze(-1), cembs, cmasks
+                    )
+                    real_indices = inds[torch.arange(inds.size(0)), max_sim_indices]
+                    optvec = torch.maximum(optvec, max_sim_partial.to(optvec.device))
+                    opt_scores[:,i].copy_(max_sim_scores)
+                    opt_inds[:,i].copy_(real_indices)
+                else:
+                    corpus = self.embedder.get_corpus(inds)
+                    logger.info("All required documents are loaded")
+                    # cembs = []
+                    # cmasks = []
+                    for q_id in tqdm(range(qembs.shape[0]), desc="Processing queries"):
+                        cemb, cmask = corpus[
+                            (q_id * torch.ones(inds.shape[1], dtype=torch.long, device=corpus.device)),
+                            torch.arange(inds.shape[1], dtype=torch.long, device=corpus.device)
+                        ]
+
+                        max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
+                            qembs[q_id].unsqueeze(0), qmasks[q_id].unsqueeze(0), optvec.unsqueeze(-1)[q_id].unsqueeze(0), cemb.unsqueeze(0), cmask.unsqueeze(0)
+                        )
+                        real_indices = inds[q_id, max_sim_indices.cpu()]
+                        optvec[q_id] = torch.maximum(optvec[q_id], max_sim_partial.squeeze(0).to(optvec.device))
+                        opt_scores[q_id,i] = max_sim_scores
+                        opt_inds[q_id,i] = real_indices
+                    
+                    # cembs = torch.stack(cembs)
+                    # cmasks = torch.stack(cmasks)
+                    # with open(f"./disk_corpus_iter_{i}.pkl", "wb") as f:
+                    #     pickle.dump((cembs, cmasks), f)
+            
+        save((opt_inds,opt_scores), result_file_path)
+        return opt_inds, opt_scores
+
+    ## non tensorized loop 
+    def search(self, qembs, qmasks, k):
+        qembs_muvera = self.augment_and_muvera_encode(qembs, qmasks)
+
+        num_rh = self.config.num_rh_augment
+        qembs_per_rh = qembs_muvera.shape[0] // num_rh  # should be exact
+
+        if self.config.parallelization == "thread":
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [
+                    executor.submit(search_muvera_worker_for_th, qembs_muvera[rh * qembs_per_rh: (rh + 1) * qembs_per_rh], k, self.indices[rh], rh)
+                    for rh in range(self.config.num_rh_augment)
+                ]
+                all_ids = [future.result() for future in concurrent.futures.as_completed(futures)]
+        elif self.config.parallelization == "none":
+            all_ids = [search_muvera_worker_for_th(qembs_muvera[rh * qembs_per_rh, (rh + 1) * qembs_per_rh], k, self.indices[rh], rh) for rh in range(self.config.num_rh_augment)]
+        else:
+            raise ValueError(f"Unknown parallelization method: {self.config.parallelization}")
+
+        result = rowwise_union_padded(all_ids, self.config.num_rh_augment, self.config.colbert_topk)
+        return torch.from_numpy(result)
+
+
 ### helper worker functions for multiprocessing/multithreading
 def search_worker_for_mp(i, config, queries, qembs, qmasks, k):
     with torch.inference_mode():
@@ -664,8 +879,8 @@ class ColBERT_internal(ColBERTAugmented):
             for i in tqdm(range(self.config.k)):
                 logger.info(f"Running iteration {i+1}/{self.config.k}")
                 # qembs[:,:,-1] = optvec # THIS STEP IS NOT NEEDED FOR INTERNAL
-                k = self.config.colbert_topk if self.config.colbert_internal.rerank_external else 1
-                inds = self.search(qembs, k=k, opt_vec = optvec)
+                # k = self.config.colbert_topk if self.config.colbert_internal.rerank_external else 1
+                inds = self.search(qembs, k=self.config.colbert_topk, opt_vec = optvec)
                 # KN TODO: save stats?
                 # save(inds,"debug_inds.pkl")
                 logger.info(f"Search Done - iter {i+1}/{self.config.k}")
@@ -888,6 +1103,11 @@ if __name__=="__main__":
         assert not conf.augment
         logging.info(f"Running MUVERA iid on ColBERT embeddings with FAISS")
         obj = MuveraTopK(conf)
+
+    elif conf.method == "muvera_augmented":
+        assert conf.augment
+        logging.info(f"Running MUVERA augmented on ColBERT embeddings with FAISS")
+        obj = MuveraAugmented(conf)
 
     elif conf.method == "baseline":
         assert conf.augment == False
