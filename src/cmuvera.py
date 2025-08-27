@@ -12,12 +12,146 @@ from torch import Tensor
 from .embedder import ColBERTEmbedder
 from tqdm import tqdm
 
+from pebble import ProcessPool
+from concurrent.futures import TimeoutError
+
 
 def get_muvera(config, colbert_config):
     if config.muvera.type == "BERT":
         return MUVERA(config, colbert_config)
     else:
         raise ValueError("Invalid variety")
+
+
+def _RH_augmentation_corpus(embs, colbert_config, config, embedder, ret_masks=True):
+    # NOTE : INDRA
+    if colbert_config.dbl_norm:
+        embs[:,:,-1] = 0
+        embs = torch.nn.functional.normalize(embs, p=2, dim=2)
+    
+    embs[:,:,-1] = -1
+    augmented_embs = []
+    new_masks = []
+    embs = embs.to('cuda')
+
+    for i in range(colbert_config.num_rh_augment):
+        filename = f"./experiments/{config.data.dataset_name}/RH.{config.embedder.emb_dim}.{i}.pt"
+        generate_new_rh = colbert_config.generate_new_rh
+        logger.info(f"Loading/Generating RH matrix from {filename}, generate_new_rh={generate_new_rh}")
+        assert (generate_new_rh == False)
+        assert filename is not None, "RH_file must be set in the config"
+        logger.info(f"Assertions done")
+        if generate_new_rh:
+            import hashlib
+            # Hash the filename and use it as the seed for reproducibility
+            seed = int.from_bytes(hashlib.sha256(filename.encode()).digest()[:4], 'big')
+            gen = torch.Generator(device="cpu")
+            gen.manual_seed(seed)
+            RH = torch.randn(embs.size(2), generator=gen).to(embs.device)
+            torch.save(RH, filename)
+        else:
+            assert os.path.exists(filename)
+            RH = torch.load(filename)
+
+        print(f"RH device: {RH.device}, embs device: {embs.device}")
+        signs = torch.sign(embs @ RH)
+        signs[signs == 0] = 1
+        reflect = signs.unsqueeze(-1)*embs
+        augmented_embs.append(torch.cat([embs, reflect], dim=-1))
+
+        if ret_masks:
+            new_masks.append(embedder.cmasks)
+
+    logger.info(f"Completed RH augmentation, returning {len(augmented_embs)} augmented copies")
+
+    if ret_masks:
+        return torch.cat(augmented_embs, dim = 0), torch.cat(new_masks, dim=0)
+    else:
+        return torch.cat(augmented_embs, dim = 0)
+
+
+def _process_file(filename, self_config):
+    """
+    Worker function: process one embedding file and save MUVERA output.
+    `self_config` is a plain dict with all paths + flags needed.
+    """
+
+    logger.info(f"Unpacking config for this worker {os.getpid()} for file {filename}")
+    # Unpack config (avoid pickling `self`)
+    embedding_parent_dir = self_config["embedding_parent_dir"]
+    masks_parent_dir = self_config["masks_parent_dir"]
+    muvera_path = self_config["muvera_path"]
+    muvera_full_path = self_config["muvera_full_path"]
+    muvera_aug_path = self_config["muvera_aug_path"]
+    muvera_config = self_config["config"]
+    colbert_config = self_config["colbert_config"]
+    global_config = self_config["global_config"]
+    embedder = self_config["embedder"]
+
+    # Rebuild FDE generators inside the worker
+    fde_generator_clean = FdeLateInteractionModel(
+        muvera_config.num_repetitions,
+        muvera_config.num_simhash_projections,
+        muvera_config.projection_dimension,
+        muvera_config.final_projection_dimension,
+    )
+    fde_generator_aug = FdeLateInteractionModel(
+        muvera_config.num_repetitions,
+        muvera_config.num_simhash_projections,
+        muvera_config.projection_dimension,
+        muvera_config.final_projection_dimension,
+    )
+
+    # Load embeddings + masks
+    embs_dict = torch.load(os.path.join(embedding_parent_dir, filename), map_location="cpu", weights_only=False)
+    masks_dict = torch.load(os.path.join(masks_parent_dir, filename), map_location="cpu", weights_only=False)
+    logger.info(f"Worker {os.getpid()} loaded embeddings and masks for file {filename}")
+
+    embs_dict_final = {k: v for k, v in embs_dict.items() if k != "embs_compressed"}
+    cembs = embs_dict["embs_compressed"]
+    cmasks = masks_dict["masks"]
+
+    # Augmentation (if enabled)
+    if global_config.augment:
+        logger.info(f"Worker {os.getpid()} performing augmentation for file {filename}")
+        with torch.no_grad():
+            augmented_cembs = _RH_augmentation_corpus(cembs, colbert_config, global_config, embedder, ret_masks=False)
+            augmented_cembs = torch.nn.functional.normalize(augmented_cembs, p=2, dim=2)
+            cembs = augmented_cembs.half()
+            cmasks = cmasks.repeat(colbert_config.num_rh_augment, 1)
+            assert cmasks.shape[0] == cembs.shape[0]
+
+            logger.info(f"After augmentation, cembs shape: {cembs.shape}, cmasks shape: {cmasks.shape}")
+    else:
+        if config.half_embs:
+            cembs = cembs.half()
+
+    # Encode each corpus item
+    cembs_muvera = []
+    for cidx, cemb in enumerate(tqdm(cembs, desc=f"Converting into Muvera encodings")):
+        cmask = cmasks[cidx]
+        cemb = cemb[cmask]  # remove padded tokens
+        if not global_config.augment:
+            cembs_muvera.append(fde_generator_clean.encode_single_item(cemb))
+        else:
+            cembs_muvera.append(fde_generator_aug.encode_single_item(cemb))
+
+    cembs_muvera = np.stack(cembs_muvera, axis=0)
+
+    # Save outputs
+    if not global_config.augment:
+        embs_dict_final["embs_muvera"] = cembs_muvera
+        out_dir = muvera_path if config.half_embs else muvera_full_path
+    else:
+        embs_dict_final["embs_muvera_aug"] = cembs_muvera
+        out_dir = muvera_aug_path
+
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, filename)
+    torch.save(embs_dict_final, out_path)
+
+    return out_path
+
     
 # Wrapper to calculate MUVERA FDE
 class FdeLateInteractionModel():
@@ -95,46 +229,6 @@ class MUVERA:
         self.masks_parent_dir = f"{self.prefix_str}/corpus/masks"
         self.status_file  = f"{self.prefix_str}/corpus/status.json"
 
-    def _RH_augmentation_corpus(self,embs,ret_masks=True):
-        # NOTE : INDRA
-        if self.colbert_config.dbl_norm:
-            embs[:,:,-1] = 0
-            embs = torch.nn.functional.normalize(embs, p=2, dim=2)
-        
-        embs[:,:,-1] = -1
-        augmented_embs = []
-        new_masks = []
-
-        for i in range(self.colbert_config.num_rh_augment):
-            filename = f"./experiments/{config.data.dataset_name}/RH.{config.embedder.emb_dim}.{i}.pt"
-            generate_new_rh = self.colbert_config.generate_new_rh
-            assert (generate_new_rh == False)
-            assert filename is not None, "RH_file must be set in the config"
-            if generate_new_rh:
-                import hashlib
-                # Hash the filename and use it as the seed for reproducibility
-                seed = int.from_bytes(hashlib.sha256(filename.encode()).digest()[:4], 'big')
-                gen = torch.Generator(device="cpu")
-                gen.manual_seed(seed)
-                self.RH = torch.randn(embs.size(2), generator=gen).to(embs.device)
-                torch.save(self.RH, filename)
-            else:
-                assert os.path.exists(filename)
-                self.RH = torch.load(filename)
-                    
-            signs = torch.sign(embs @ self.RH)
-            signs[signs == 0] = 1
-            reflect = signs.unsqueeze(-1)*embs
-            augmented_embs.append(torch.cat([embs, reflect], dim=-1))
-
-            if ret_masks:
-                new_masks.append(self.embedder.cmasks)
-
-        if ret_masks:
-            return torch.cat(augmented_embs, dim = 0), torch.cat(new_masks, dim=0)
-        else:
-            return torch.cat(augmented_embs, dim = 0)
-
     def generate_fde(self):
         self.embedder.embed_full_dataset(self.dataloader,mode=self.global_config.embedder.mode) 
         logger.info("Full Dataset Embedded")
@@ -160,6 +254,65 @@ class MUVERA:
         fde = fde_generator.encode()
 
         print(fde.shape)
+
+    def dump_fde_to_disk_parallel(self):
+        """
+        Parallelized version of dump_fde_to_disk.
+        """
+        # Build output paths
+        muvera_path = f"{self.prefix_str}/corpus/compressed_muvera_{self.global_config.lin_dim}"
+        muvera_full_path = f"{self.prefix_str}/corpus/compressed_muvera_full_{self.global_config.lin_dim}"
+        muvera_aug_path = f"{self.prefix_str}/corpus/compressed_muvera_aug_{self.global_config.lin_dim}"
+
+        os.makedirs(muvera_path, exist_ok=True)
+        os.makedirs(muvera_full_path, exist_ok=True)
+        os.makedirs(muvera_aug_path, exist_ok=True)
+
+        # Gather filenames
+        embed_filenames = [x for x in os.listdir(self.embedding_parent_dir) if x.endswith("pkl")]
+        if self.global_config.augment:
+            current_filenames = [x for x in os.listdir(muvera_aug_path) if x.endswith("pkl")]
+        else:
+            current_filenames = [x for x in os.listdir(muvera_path if self.config.half_embs else muvera_full_path)
+                                if x.endswith("pkl")]
+        if not self.config.fresh_start:
+            embed_filenames = list(set(embed_filenames) - set(current_filenames))
+
+        # Pack config into a plain dict (picklable)
+        self_config = {
+            "embedding_parent_dir": self.embedding_parent_dir,
+            "masks_parent_dir": self.masks_parent_dir,
+            "muvera_path": muvera_path,
+            "muvera_full_path": muvera_full_path,
+            "muvera_aug_path": muvera_aug_path,
+            "config": self.config,
+            "colbert_config": self.colbert_config,
+            "global_config": self.global_config,
+            "embedder": self.embedder
+        }
+
+        # Parallel execution
+        results = []
+        with ProcessPool(max_workers=10) as pool:
+            future = pool.map(_process_file,
+                              embed_filenames,
+                              [self_config] * len(embed_filenames),
+                              timeout=None, chunksize=1)
+
+            it = future.result()
+            for _ in range(len(embed_filenames)):
+                try:
+                    result = next(it)   # result is whatever _process_file returns
+                    results.append(result)
+                except TimeoutError:
+                    # one worker hung, you can skip or retry
+                    continue
+                except Exception as e:
+                    # one worker had an exception, you can skip or retry
+                    logger.error(f"Worker had exception: {e}")
+                    continue
+
+        logger.info(f"All files processed. Processed {len(results)} files.")
 
     def dump_fde_to_disk(self):
         """
@@ -283,4 +436,7 @@ if __name__=="__main__":
     if config.embedder.mode == "mem":
         fde_gen.generate_fde()
     elif config.embedder.mode == "disk":
-        fde_gen.dump_fde_to_disk()
+        if config.muvera.parallel:
+            fde_gen.dump_fde_to_disk_parallel()
+        else:
+            fde_gen.dump_fde_to_disk()
