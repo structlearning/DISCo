@@ -32,15 +32,14 @@ def _RH_augmentation_corpus(embs, colbert_config, config, embedder, ret_masks=Tr
     embs[:,:,-1] = -1
     augmented_embs = []
     new_masks = []
-    embs = embs.to('cuda')
 
     for i in range(colbert_config.num_rh_augment):
         filename = f"./experiments/{config.data.dataset_name}/RH.{config.embedder.emb_dim}.{i}.pt"
         generate_new_rh = colbert_config.generate_new_rh
-        logger.info(f"Loading/Generating RH matrix from {filename}, generate_new_rh={generate_new_rh}")
+        # logger.info(f"Loading/Generating RH matrix from {filename}, generate_new_rh={generate_new_rh}")
         assert (generate_new_rh == False)
         assert filename is not None, "RH_file must be set in the config"
-        logger.info(f"Assertions done")
+        # logger.info(f"Assertions done")
         if generate_new_rh:
             import hashlib
             # Hash the filename and use it as the seed for reproducibility
@@ -51,9 +50,9 @@ def _RH_augmentation_corpus(embs, colbert_config, config, embedder, ret_masks=Tr
             torch.save(RH, filename)
         else:
             assert os.path.exists(filename)
-            RH = torch.load(filename)
+            RH = torch.load(filename).to('cpu')
 
-        print(f"RH device: {RH.device}, embs device: {embs.device}")
+        # print(f"RH device: {RH.device}, embs device: {embs.device}")
         signs = torch.sign(embs @ RH)
         signs[signs == 0] = 1
         reflect = signs.unsqueeze(-1)*embs
@@ -113,7 +112,7 @@ def _process_file(filename, self_config):
 
     # Augmentation (if enabled)
     if global_config.augment:
-        logger.info(f"Worker {os.getpid()} performing augmentation for file {filename}")
+        # logger.info(f"Worker {os.getpid()} performing augmentation for file {filename}")
         with torch.no_grad():
             augmented_cembs = _RH_augmentation_corpus(cembs, colbert_config, global_config, embedder, ret_masks=False)
             augmented_cembs = torch.nn.functional.normalize(augmented_cembs, p=2, dim=2)
@@ -121,7 +120,7 @@ def _process_file(filename, self_config):
             cmasks = cmasks.repeat(colbert_config.num_rh_augment, 1)
             assert cmasks.shape[0] == cembs.shape[0]
 
-            logger.info(f"After augmentation, cembs shape: {cembs.shape}, cmasks shape: {cmasks.shape}")
+            # logger.info(f"After augmentation, cembs shape: {cembs.shape}, cmasks shape: {cmasks.shape}")
     else:
         if config.half_embs:
             cembs = cembs.half()
@@ -149,6 +148,8 @@ def _process_file(filename, self_config):
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, filename)
     torch.save(embs_dict_final, out_path)
+
+    logger.info(f"Worker {os.getpid()} saved Muvera embeddings to {out_path} for file {filename}")
 
     return out_path
 
@@ -293,7 +294,7 @@ class MUVERA:
 
         # Parallel execution
         results = []
-        with ProcessPool(max_workers=10) as pool:
+        with ProcessPool(max_workers=10, max_tasks=1) as pool:
             future = pool.map(_process_file,
                               embed_filenames,
                               [self_config] * len(embed_filenames),
