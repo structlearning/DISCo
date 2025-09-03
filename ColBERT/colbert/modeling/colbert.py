@@ -12,7 +12,69 @@ import pathlib
 from torch.utils.cpp_extension import load
 from math import sqrt
 
-class ColBERT(BaseColBERT):
+
+class AugmentationMixin(object):
+    def _RH_augmentation_query(self, embs, RH_file=None, generate_new_rh=None):
+        # embs[:,:,-1] = -1
+        if self.RH is None:
+            if RH_file is None:
+                filename = self.colbert_config.RH_file
+            else:
+                filename = RH_file
+
+            if generate_new_rh is None:
+                generate_new_rh = self.colbert_config.generate_new_rh
+            assert filename is not None, "RH_file must be set in the config"
+            if generate_new_rh:
+                import hashlib
+                # Hash the filename and use it as the seed for reproducibility
+                seed = int.from_bytes(hashlib.sha256(filename.encode()).digest()[:4], 'big')
+                gen = torch.Generator(device="cpu")
+                gen.manual_seed(seed)
+                self.RH = torch.randn(embs.size(2), generator=gen).to(embs.device)
+                torch.save(self.RH, filename)
+            else:
+                assert os.path.exists(filename)
+                self.RH = torch.load(filename)
+
+        signs = torch.sign(embs @ self.RH)
+        signs[signs == 0] = 1
+        reflect = signs.unsqueeze(-1)*embs
+        embs = torch.cat([embs, reflect], dim=-1)
+        return embs
+
+    def _RH_augmentation_corpus(self,embs):
+        # NOTE : INDRA
+        if self.colbert_config.dbl_norm:
+            embs[:,:,-1] = 0
+            embs = torch.nn.functional.normalize(embs, p=2, dim=2)
+
+        embs[:,:,-1] = -1
+        if self.RH is None:
+            filename = self.colbert_config.RH_file
+            generate_new_rh = self.colbert_config.generate_new_rh
+            assert filename is not None, "RH_file must be set in the config"
+            if generate_new_rh:
+                import hashlib
+                # Hash the filename and use it as the seed for reproducibility
+                seed = int.from_bytes(hashlib.sha256(filename.encode()).digest()[:4], 'big')
+                gen = torch.Generator(device="cpu")
+                gen.manual_seed(seed)
+                self.RH = torch.randn(embs.size(2), generator=gen).to(embs.device)
+                torch.save(self.RH, filename)
+            else:
+                assert os.path.exists(filename)
+                self.RH = torch.load(filename)
+
+
+        signs = torch.sign(embs @ self.RH)
+        signs[signs == 0] = 1
+        reflect = signs.unsqueeze(-1)*embs
+        embs = torch.cat([embs, reflect], dim=-1)
+        return embs
+
+
+class ColBERT(BaseColBERT, AugmentationMixin):
     """
         This class handles the basic encoding and scoring operations in ColBERT. It is used for training.
     """
@@ -149,60 +211,6 @@ class ColBERT(BaseColBERT):
     
     def _no_augmentation(self,embs):
         embs[:,:,-1] = 0
-        return embs
-
-    def _RH_augmentation_query(self,embs):
-        # embs[:,:,-1] = -1
-        if self.RH is None:
-            filename = self.colbert_config.RH_file
-            generate_new_rh = self.colbert_config.generate_new_rh
-            assert filename is not None, "RH_file must be set in the config"
-            if generate_new_rh:
-                import hashlib
-                # Hash the filename and use it as the seed for reproducibility
-                seed = int.from_bytes(hashlib.sha256(filename.encode()).digest()[:4], 'big')
-                gen = torch.Generator(device="cpu")
-                gen.manual_seed(seed)
-                self.RH = torch.randn(embs.size(2), generator=gen).to(embs.device)
-                torch.save(self.RH, filename)
-            else:
-                assert os.path.exists(filename)
-                self.RH = torch.load(filename)
-                
-        signs = torch.sign(embs @ self.RH)
-        signs[signs == 0] = 1
-        reflect = signs.unsqueeze(-1)*embs
-        embs = torch.cat([embs, reflect], dim=-1)
-        return embs
-
-    def _RH_augmentation_corpus(self,embs):
-        # NOTE : INDRA
-        if self.colbert_config.dbl_norm:
-            embs[:,:,-1] = 0
-            embs = torch.nn.functional.normalize(embs, p=2, dim=2)
-        
-        embs[:,:,-1] = -1
-        if self.RH is None:
-            filename = self.colbert_config.RH_file
-            generate_new_rh = self.colbert_config.generate_new_rh
-            assert filename is not None, "RH_file must be set in the config"
-            if generate_new_rh:
-                import hashlib
-                # Hash the filename and use it as the seed for reproducibility
-                seed = int.from_bytes(hashlib.sha256(filename.encode()).digest()[:4], 'big')
-                gen = torch.Generator(device="cpu")
-                gen.manual_seed(seed)
-                self.RH = torch.randn(embs.size(2), generator=gen).to(embs.device)
-                torch.save(self.RH, filename)
-            else:
-                assert os.path.exists(filename)
-                self.RH = torch.load(filename)
-                
-                
-        signs = torch.sign(embs @ self.RH)
-        signs[signs == 0] = 1
-        reflect = signs.unsqueeze(-1)*embs
-        embs = torch.cat([embs, reflect], dim=-1)
         return embs
     
     def doc_modified(self, input_ids, attention_mask, keep_dims=True):
