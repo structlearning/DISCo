@@ -518,11 +518,15 @@ class CollectionIndexer():
 
 def compute_faiss_kmeans(dim, num_partitions, kmeans_niters, shared_lists, return_value_queue=None):
     use_gpu = torch.cuda.is_available()
+    print(f"FAISS using GPU: {use_gpu}")
     kmeans = faiss.Kmeans(dim, num_partitions, niter=kmeans_niters, gpu=use_gpu, verbose=True, seed=123)
+    # KMeans Clustering verbose setting
+    kmeans.cp.verbose = True
 
     sample = shared_lists[0][0]
     sample = sample.float().numpy()
 
+    print("Training k-means...")
     kmeans.train(sample)
 
     centroids = torch.from_numpy(kmeans.centroids)
