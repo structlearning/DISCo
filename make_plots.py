@@ -243,12 +243,12 @@ def plot_b_vs_metric(dataset,k_values,b_values,norm_types:str|list=["norm","dbln
         intersection_figs.write_image(f"plots/images/bvI_{dataset}_dblnorm_k{k}_{'.'.join(map(str, b_values))}.jpeg")
         
 
-def plot_k_vs_metric(dataset,k,bsizes=[10,25,50,100,200],norm_types:str|list=["norm","dblnorm"]):
+def plot_k_vs_metric(dataset, k, bsizes_aug=[10,25,50,100,200], bsizes_int=[1, 10, 15], norm_types:str|list=["norm","dblnorm"]):
     if isinstance(norm_types,str):
         norm_types = [norm_types]
     score_plot = go.Figure()
     for method in "LazyGreedy", "LazierThanLazyGreedy", "NaiveGreedy":
-        inds, scores = pickle.load(open(f"pickles/results/greedy_submodlib_{method}_k{k}_{dataset}_bf_k{k}.pkl", "rb"))
+        inds, scores = pickle.load(open(f"pickles/results/greedy_submodlib_{method}_k{k}_{dataset}_bf_k{k}_submodlib_no_stop.pkl", "rb"))
         score_plot.add_trace(
             go.Scatter(
                 x=np.arange(1, len(scores) + 1),
@@ -269,27 +269,79 @@ def plot_k_vs_metric(dataset,k,bsizes=[10,25,50,100,200],norm_types:str|list=["n
             line=dict(width=1),
         )
     )
+
+    mvt = "plaid"
+
+    colbert_inds, colbert_scores = load(f"pickles/results/BERT/colbertv2-{mvt}/norm_base_n2_d128_{dataset}_k{k}.pkl")
+    score_plot.add_trace(
+        go.Scatter(
+            x=np.arange(1, len(colbert_scores) + 1),
+            y=colbert_scores.cpu().mean(dim=0).numpy(),
+            mode="lines+markers",
+            name=f"ColBERT iid",
+            line=dict(width=1),
+        )
+    )
+
+    muvera_inds, muvera_scores = load(f"pickles/results/BERT/muvera_iid_{dataset}_k{k}.pkl")
+    score_plot.add_trace(
+        go.Scatter(
+            x=np.arange(1, len(muvera_scores) + 1),
+            y=muvera_scores.cpu().mean(dim=0).numpy(),
+            mode="lines+markers",
+            name=f"MUVERA iid",
+            line=dict(width=1),
+        )
+    )
+
+    warp_inds, warp_scores = load(f"pickles/results/xtr_colbertv2-plaid_{dataset}_k{k}.pkl")
+    score_plot.add_trace(
+        go.Scatter(
+            x=np.arange(1, len(warp_scores) + 1),
+            y=warp_scores.cpu().mean(dim=0).numpy(),
+            mode="lines+markers",
+            name=f"WARP iid",
+            line=dict(width=1),
+        )
+    )
+
+    # TODO: Add Muvera Augmented
     
     for norm_type in norm_types:
-        for bsize in bsizes:
+        for bsize in bsizes_aug:
             aug_inds, aug_scores = load(f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_aug_n2_d128_rh8_threshold1_{dataset}_k{k}_rerankperh{bsize}.pkl")
             score_plot.add_trace(
                 go.Scatter(
                     x=np.arange(1, len(aug_scores) + 1),
                     y=aug_scores.mean(dim=0).numpy(),
                     mode="lines+markers",
-                    name=f"Augmented - {bsize} per table",
+                    name=f"Angiogram - topK = {bsize}",
                     line=dict(width=1),
                 )
             )
-        score_plot.update_layout(
-            title=f"Score Plot for {dataset}",
-            xaxis_title="k",
-            yaxis_title="F(S)",
-        )
+
+        for bsize in bsizes_int:
+            aug_inds, aug_scores = load(f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_int_n2_d128_rh8_intTrue_extTrue_{dataset}_k{k}_rerankperh{bsize}.pkl")
+            score_plot.add_trace(
+                go.Scatter(
+                    x=np.arange(1, len(aug_scores) + 1),
+                    y=aug_scores.mean(dim=0).numpy(),
+                    mode="lines+markers",
+                    name=f"Bypass - topK = {bsize}",
+                    line=dict(width=1),
+                )
+            )
+
+    score_plot.update_layout(
+        title=f"Score Plot for {dataset}",
+        xaxis_title="k",
+        yaxis_title="F(S)",
+    )
     nname = "all" if len(norm_types) > 1 else norm_types[0]
-    score_plot.write_html(f"plots/html/kvF_{dataset}_{nname}_{'.'.join(list(map(str,bsizes)))}.html")
-    score_plot.write_image(f"plots/images/kvF_{dataset}_{nname}_{'.'.join(list(map(str,bsizes)))}.jpeg")
+    # score_plot.write_html(f"plots/html/kvF_{dataset}_{nname}_{'.'.join(list(map(str,bsizes)))}.html")
+    # score_plot.write_image(f"plots/images/kvF_{dataset}_{nname}_{'.'.join(list(map(str,bsizes)))}.jpeg")
+    score_plot.write_html(f"plots/html/kvF_{dataset}_{nname}.html")
+    score_plot.write_image(f"plots/images/kvF_{dataset}_{nname}.jpeg")
     
 def plot_b_vs_metric_all(dataset):
     norm_types = ["norm","dblnorm"]
@@ -592,11 +644,15 @@ if __name__ == "__main__":
     os.makedirs("plots/html",exist_ok=True)
     os.makedirs("plots/images",exist_ok=True)   
     # Load the data
-    datasets = ["nfcorpus","scifact"]
-    b_sizes_aug = [10,25,50,100,200]
+    # datasets = ["nfcorpus","scifact"]
+    # datasets = ["hotpotqa", "fever", "msmarco"]
+    datasets = ["hotpotqa"]
+    # b_sizes_aug = [10,25,50,100,200]
+    b_sizes_aug = [200, 500, 1000, 2000, 5000]
+    b_sizes_int = [1, 10, 15]
     k_values=[5,10,15]
     max_k = 15
     for data in datasets:
-        # plot_k_vs_metric(data,max_k,b_sizes_aug)
+        plot_k_vs_metric(data, max_k, b_sizes_aug, b_sizes_int, norm_types=["dblnorm"])
         # plot_b_vs_metric(data,k_values,b_sizes_aug)
-        plot_b_vs_metric_all(data)
+        # plot_b_vs_metric_all(data)
