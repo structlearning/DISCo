@@ -300,12 +300,33 @@ def plot_k_vs_metric(dataset, k, bsizes_aug=[10,25,50,100,200], bsizes_int=[1, 1
             x=np.arange(1, len(warp_scores) + 1),
             y=warp_scores.cpu().mean(dim=0).numpy(),
             mode="lines+markers",
-            name=f"WARP iid",
+            name=f"WARP iid (BERT)",
             line=dict(width=1),
         )
     )
 
-    # TODO: Add Muvera Augmented
+    warp_inds, warp_scores = load(f"pickles/results/xtr_colbertv2-plaid_{dataset}_k{k}_xtr-base-en.pkl")
+    score_plot.add_trace(
+        go.Scatter(
+            x=np.arange(1, len(warp_scores) + 1),
+            y=warp_scores.cpu().mean(dim=0).numpy(),
+            mode="lines+markers",
+            name=f"WARP iid (XTR T5)",
+            line=dict(width=1),
+        )
+    )
+
+    # For now, Muvera augmented only topK=200
+    muvera_aug_inds, muvera_aug_scores = load(f"pickles/results/BERT/muvera_aug_{dataset}_k{k}.pkl")
+    score_plot.add_trace(
+        go.Scatter(
+            x=np.arange(1, len(muvera_aug_scores) + 1),
+            y=muvera_aug_scores.cpu().mean(dim=0).numpy(),
+            mode="lines+markers",
+            name=f"Muvera Augmented - topK = 200",
+            line=dict(width=1),
+        )
+    )
     
     for norm_type in norm_types:
         for bsize in bsizes_aug:
