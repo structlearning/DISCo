@@ -12,6 +12,7 @@ dtype: 'float32' # 'float16', 'bfloat16'
 data:
   loader_type: "beir"
   dataset_name: "scifact"
+  query_type: "forum" # "forum" or "search" if loader type is lotte
 
 baseline:
   bucket_size: 1000 # -1 if you want everything

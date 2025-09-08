@@ -1,5 +1,6 @@
 from beir import util
 from beir.datasets.data_loader import GenericDataLoader
+import ir_datasets
 import os
 import logging
 
@@ -8,6 +9,8 @@ logger = logging.getLogger(__name__)
 def get_dataloader(config):
     if config.loader_type == "beir":
         return BEIRDataLoader(config)
+    elif config.loader_type == "lotte":
+        return LoTTEDataLoader(config)
     else:
         raise NotImplementedError("DataLoader not implemented")
 
@@ -65,3 +68,29 @@ class BEIRDataLoader:
         del corpus_data, query_data
         self._loader = None
         return corpus, query
+
+
+class LoTTEDataLoader:
+    def __init__(self,config):
+        self.dataset_name = config.dataset_name
+        self.query_type = config.query_type
+        self.config = config
+        self._loader = None
+
+    def get_data(self, split="test"):
+        # We use the ir_datasets package to fetch.
+        # IR_DATASETS_HOME must be set.
+        dataset = ir_datasets.load(f"lotte/{self.dataset_name}/{split}/{self.query_type}")
+        corpus = {doc.doc_id: doc.text for doc in dataset.docs_iter()}
+        queries = {query.query_id: query.text for query in dataset.queries_iter()}
+        return corpus, queries
+
+    def get_tsv(self, split="test"):
+        # Triggers get_data before returning the tsv paths
+        self.get_data(split=split)
+
+        IR_DATASETS_HOME = os.getenv("IR_DATASETS_HOME", "./data/.ir_datasets")
+        queries_path = f"{IR_DATASETS_HOME}/lotte/lotte_extracted/lotte/{self.dataset_name}/{split}/questions.{self.query_type}.tsv"
+        corpus_path = f"{IR_DATASETS_HOME}/lotte/lotte_extracted/lotte/{self.dataset_name}/{split}/collection.tsv"
+
+        return corpus_path, queries_path
