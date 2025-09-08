@@ -36,11 +36,16 @@ class WarpBaseline(BaseE2E):
                 dim=self.config.embedder.emb_dim
             )
 
+        if self.config.embedder.model == "google/xtr-base-en":
+            self.suffix = "_xtr-base-en"
+        else:
+            self.suffix = ""
+
     def index(self):
         dataset_name = self.dataloader.dataset_name
         corpus_tsv_filename, _ = self.dataloader.get_tsv()
         nbits = self.config.colbert.nbits
-        index_name = f"xtr_nbits={nbits}.noaug"
+        index_name = f"xtr_nbits={nbits}.noaug{self.suffix}"
         with warp.infra.Run().context(warp.infra.RunConfig(nranks=1, experiment=f"{self.config.data.dataset_name}/{self.config.embedder.type}/{self.mv_type}")):
             config = warp.infra.ColBERTConfig(
                 nbits=nbits,
@@ -51,25 +56,28 @@ class WarpBaseline(BaseE2E):
                 index_root=f"./experiments/{self.config.data.dataset_name}/BERT/{self.mv_type}/indexes"
             )
             # indexer = warp.Indexer(checkpoint="google/xtr-base-en", config=config)
-            indexer = warp.Indexer(checkpoint="bert-base-uncased", config=config)
+            indexer = warp.Indexer(checkpoint=self.config.embedder.model, config=config)
             indexer.index(name=index_name, collection=corpus_tsv_filename, overwrite=self.config.overwrite_index)
         ## index needs to be converted into a warp index
         convert_index(os.path.join(config.index_root, index_name))
 
-    def search(self,qembs,k):
-        queries = DummyQueryForColbert(len(qembs))
-        ranking = self.searcher._search_all_Q(queries, qembs, k).todict()
+    def search(self, queries, k):
+        # ranking = self.searcher._search_all_Q(queries, qembs, k).todict()
+        # Q_cpu set to True if using WARP engine search
+        ranking = self.searcher.search_all(queries, k, Q_cpu=True).todict()
 
+        # Order of dict enumerate (keys,values) is same as order of queries, i.e., order of insertion
+        # This is ensured python 3.7 onwards.
         res = []
-        for i in range(len(qembs)):
-            ids, _, _ = zip(*ranking[i])
+        for _, values in ranking.items():
+            ids, _, _ = zip(*values)
             res.append(ids) 
             
         max_len = max([len(val) for val in res])
         logger.info(f"Max length of retrieved ids comes out to: {max_len}. Average length of merged ids is {sum([len(val) for val in res])/len(res)}. Otherwise would have been {self.config.colbert_topk}")
         ## TODO:tensorize -- just initialise the tensor to -1 then do torch.where ==-1 tensor[:,:1]
-        result_tensor = torch.zeros((len(qembs), max_len), dtype=torch.int64)
-        for i in range(len(qembs)):
+        result_tensor = torch.zeros((len(queries), max_len), dtype=torch.int64)
+        for i in range(len(queries)):
             current_set = list(res[i])
             current_set.extend([current_set[0]] * (max_len - len(current_set)))
             result_tensor[i] = torch.tensor(current_set)
@@ -80,7 +88,7 @@ class WarpBaseline(BaseE2E):
         # Init searcher
         dataset_name = self.dataloader.dataset_name
         nbits = self.config.colbert.nbits
-        index_name = f"xtr_nbits={nbits}.noaug"
+        index_name = f"xtr_nbits={nbits}.noaug{self.suffix}"
         index_root = f"./experiments/{self.config.data.dataset_name}/BERT/{self.mv_type}/indexes"
 
         # with warp.infra.Run().context(warp.infra.RunConfig(nranks=1, experiment=f"{self.config.data.dataset_name}/{self.config.embedder.type}/{self.mv_type}")):
@@ -95,7 +103,7 @@ class WarpBaseline(BaseE2E):
 
         warp_config = warp.engine.config.WARPRunConfig(
             nranks=4,
-            collection="beir", # beir or lotte
+            collection=self.config.data.loader_type, # beir or lotte
             dataset=dataset_name,
             type_="search", # irrelevant unless LoTTE
             datasplit="test",
@@ -109,18 +117,21 @@ class WarpBaseline(BaseE2E):
         )
 
         self.searcher = warp.Searcher(
-            checkpoint="bert-base-uncased",
+            checkpoint=self.config.embedder.model,
             index=index_name,
             index_root=index_root,
             config=warp_config,
             warp_engine=True,
         )
+
         result_file_path = f"./pickles/results/xtr_{self.variety}_{self.config.data.dataset_name}_k{self.config.k}{self.suffix}.pkl"
 
         self.embedder.embed_full_dataset(self.dataloader, mode=self.config.embedder.mode)
+        # Below embeddings used for re-ranking
         qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
 
-        result_ids = self.search(qembs.cpu(), k=self.config.k)
+        _, queries = self.dataloader.get_data()
+        result_ids = self.search(queries, self.config.k)
 
         if self.config.embedder.mode =="mem":
             ## compute real scores with opts
