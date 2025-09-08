@@ -746,7 +746,7 @@ class ColBERTAugmented(ColBERTBaseE2E):
                     # with open(f"./mem_corpus_iter_{i}.pkl", "wb") as f:
                     #     pickle.dump((cembs, cmasks), f)
                    
-                    max_sim_partial, max_sim_indices, max_sim_scores =  (
+                    max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(
                         qembs, qmasks, optvec.unsqueeze(-1), cembs, cmasks
                     )
                     real_indices = inds[torch.arange(inds.size(0)), max_sim_indices]
