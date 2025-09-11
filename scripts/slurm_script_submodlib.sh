@@ -1,9 +1,12 @@
 #!/bin/bash
 #SBATCH --partition=a40
+#SBATCH --nodes=1
+#SBATCH --ntasks=2
 #SBATCH --qos=a40
-#SBATCH --gpus=1             # Request 1 GPU
-#SBATCH --cpus-per-task=64        # Request 64 CPUs
-#SBATCH --mem=500G                # Request 500 GB RAM
+#SBATCH --gres=gpu:2             # Request 2 GPUs
+#SBATCH --gpus-per-task=1
+#SBATCH --cpus-per-task=16        # Request 64 CPUs
+#SBATCH --mem=250G                # Request 200 GB RAM
 #SBATCH --output=logs/muvera-%j.out  # Save stdout to logs/train-<jobid>.out
 #SBATCH --error=logs/muvera-%j.err   # Save stderr to logs/train-<jobid>.err
 
@@ -18,7 +21,9 @@ source ~/muvera/bin/activate
 
 cd ~/CMUVERA_IR_ref
 
-echo "Arguments received: $1, $2, $3, $4"
+echo "Arguments received: $1, $2, $3, $4, $5, $6, $7, $8"
 
 # Run your command
-python3 -m src.endtoend k=15 method='sml' data.dataset_name=$1 embedder.mode="disk" submodlib.optimizer=$2 embedder.mv_type='colbertv2-plaid' load_state=$3 submodlib.path_suffix=$4 submodlib.stop_if_zero_gain=$5 submodlib.epsilon=$6
+CUDA_VISIBLE_DEVICES=0 python3 -m src.endtoend k=10 method='sml' data.dataset_name=$1 embedder.mode="disk" submodlib.optimizer=naive embedder.mv_type='colbertv2-plaid' load_state=$3 submodlib.path_suffix=$4 submodlib.stop_if_zero_gain=$5 submodlib.epsilon=$6 data.loader_type=$7 data.query_type=$8 &
+CUDA_VISIBLE_DEVICES=1 python3 -m src.endtoend k=10 method='sml' data.dataset_name=$1 embedder.mode="disk" submodlib.optimizer=lazy embedder.mv_type='colbertv2-plaid' load_state=$3 submodlib.path_suffix=$4 submodlib.stop_if_zero_gain=$5 submodlib.epsilon=$6 data.loader_type=$7 data.query_type=$8 &
+wait
