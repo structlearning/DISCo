@@ -740,6 +740,7 @@ class ColBERTAugmented(ColBERTBaseE2E):
     def run(self):
         self._init_searcher()
         result_file_path = f"./pickles/results/{self.config.embedder.type}/{self.variety}_{self.config.data.dataset_name}_k{self.config.k}_rerankperh{self.config.colbert_topk}{self.suffix}.pkl"
+        load_state = False
         
         self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode)
         
@@ -763,7 +764,8 @@ class ColBERTAugmented(ColBERTBaseE2E):
                     file_path = f"./colbert_ids_single_norm/colbert_ids_{self.config.data.dataset_name}_{i}.pkl"
                 print(file_path)
 
-                if os.path.exists(file_path):
+                # if os.path.exists(file_path):
+                if load_state and os.path.exists(file_path):
                     print("Loading indices from file...")
                     with open(file_path, "rb") as f:
                         inds = pickle.load(f)
