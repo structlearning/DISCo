@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --partition=dgx
-#SBATCH --qos=dgx
+#SBATCH --partition=l40
+#SBATCH --qos=l40
 #SBATCH --gpus=1             # Request 1 GPU
 #SBATCH --cpus-per-task=64        # Request 64 CPUs
-#SBATCH --mem=500G                # Request 500 GB RAM
+#SBATCH --mem=280G                # Request 500 GB RAM
 #SBATCH --output=logs/muvera_$1_$2_%j.out  # Save stdout to logs/train-<jobid>.out
 #SBATCH --error=logs/muvera_$1_$2_%j.err   # Save stderr to logs/train-<jobid>.err
 

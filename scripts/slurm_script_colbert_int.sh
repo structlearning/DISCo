@@ -4,8 +4,8 @@
 #SBATCH --gpus=1             # Request 1 GPU
 #SBATCH --cpus-per-task=64        # Request 64 CPUs
 #SBATCH --mem=500G                # Request 500 GB RAM
-#SBATCH --output=logs/muvera_$1_$2_%j.out  # Save stdout to logs/train-<jobid>.out
-#SBATCH --error=logs/muvera_$1_$2_%j.err   # Save stderr to logs/train-<jobid>.err
+#SBATCH --output=logs/muvera-%j.out  # Save stdout to logs/train-<jobid>.out
+#SBATCH --error=logs/muvera-%j.err   # Save stderr to logs/train-<jobid>.err
 
 # Load modules if necessary
 # module load python/3.10
