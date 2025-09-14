@@ -122,7 +122,7 @@ def _process_file(filename, self_config):
 
             # logger.info(f"After augmentation, cembs shape: {cembs.shape}, cmasks shape: {cmasks.shape}")
     else:
-        if config.half_embs:
+        if muvera_config.half_embs:
             cembs = cembs.half()
 
     # Encode each corpus item
@@ -140,7 +140,7 @@ def _process_file(filename, self_config):
     # Save outputs
     if not global_config.augment:
         embs_dict_final["embs_muvera"] = cembs_muvera
-        out_dir = muvera_path if config.half_embs else muvera_full_path
+        out_dir = muvera_path if muvera_config.half_embs else muvera_full_path
     else:
         embs_dict_final["embs_muvera_aug"] = cembs_muvera
         out_dir = muvera_aug_path
