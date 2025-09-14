@@ -132,8 +132,10 @@ class WarpBaseline(BaseE2E):
 
         _, queries = self.dataloader.get_data()
         result_ids = self.search(queries, self.config.k)
+        chamfer_scores = []
 
         if self.config.embedder.mode =="mem":
+            # TODO: Compute Chamfer scores here.
             ## compute real scores with opts
             cembs, cmasks = self.embedder.get_corpus(result_ids)
         else:
@@ -147,19 +149,30 @@ class WarpBaseline(BaseE2E):
                     torch.arange(result_ids.shape[1], dtype=torch.long, device=corpus.device)
                 ]
 
+                out = partial_chamfer_sim(qembs[q_id][qmasks[q_id].bool()], cemb, cmask, device=qembs.device, bs=1024)
+                out_sum = out.sum(dim=0)
+                sorted_inds = torch.argsort(out_sum, descending=True)
+                sorted_out = out[:, sorted_inds]
+                res = torch.cummax(sorted_out, dim=1)[0].sum(dim=0)
+                chamfer_scores.append(res)
+
                 cembs.append(cemb)
                 cmasks.append(cmask)
+
             cembs = torch.stack(cembs)
             cmasks = torch.stack(cmasks)
+            chamfer_scores = torch.stack(chamfer_scores)
 
         ## qembs: 300,64,128, qmasks: 300,64
         ## cembs: 300,100,330,128, cmasks: 300,100,330
         
         ## qembs is already masked out, and zeroed out
-        dp = torch.einsum("abc,adec->adbe",qembs,cembs.to(qembs.device))
-        masked = torch.where(cmasks.bool().to(qembs.device).unsqueeze(2),dp,-10)
-        partials = torch.cummax(torch.amax(masked,dim=3),dim=1)[0]
-        result_scores = torch.sum(partials,dim=2)
+        # dp = torch.einsum("abc,adec->adbe",qembs,cembs.to(qembs.device))
+        # masked = torch.where(cmasks.bool().to(qembs.device).unsqueeze(2),dp,-10)
+        # partials = torch.cummax(torch.amax(masked,dim=3),dim=1)[0]
+        # result_scores = torch.sum(partials,dim=2)
+
+        result_scores = chamfer_scores
         
         save((result_ids, result_scores), result_file_path)
         return result_ids, result_scores
