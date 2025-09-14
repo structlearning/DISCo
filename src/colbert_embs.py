@@ -12,7 +12,7 @@ from src.cmuvera import FdeLateInteractionModel
 from src.dataloader import get_dataloader
 from src.embedder import ColBERTEmbedder
 from src.endtoend import BaseE2E
-from src.utils import partial_chamfer_sim_batched_with_rerank, rowwise_union_padded, save
+from src.utils import partial_chamfer_sim, partial_chamfer_sim_batched_with_rerank, rowwise_union_padded, save
 import pickle
 from tqdm import tqdm
 
@@ -331,8 +331,8 @@ class ColBERTBaseline(ColBERTBaseE2E):
         # KN TODO 2 : we might need batching for larger query sizes
 
         result_ids = self.search(qembs, qmasks, k=self.config.k)
+        chamfer_scores = []
         print(f"result ids shape : {result_ids.shape}")
-        
         if self.config.embedder.mode =="mem":
             ## compute real scores with opts
             cembs, cmasks = self.embedder.get_corpus(result_ids)
@@ -346,21 +346,32 @@ class ColBERTBaseline(ColBERTBaseE2E):
                     (q_id * torch.ones(result_ids.shape[1], dtype=torch.long, device=corpus.device)),
                     torch.arange(result_ids.shape[1], dtype=torch.long, device=corpus.device)
                 ]
+                out = partial_chamfer_sim(qembs[q_id][qmasks[q_id].bool()], cemb, cmask, device=qembs.device, bs=1024)
+                out_sum = out.sum(dim=0)
+                sorted_inds = torch.argsort(out_sum, descending=True)
+                sorted_out = out[:, sorted_inds]
+                res = torch.cummax(sorted_out, dim=1)[0].sum(dim=0)
+                chamfer_scores.append(res)
+
+                result_ids[q_id] = result_ids[q_id][sorted_inds]
 
                 cembs.append(cemb)
                 cmasks.append(cmask)
             cembs = torch.stack(cembs)
             cmasks = torch.stack(cmasks)
-        
+            chamfer_scores = torch.stack(chamfer_scores)
+
         # Common code to disk and mem mode
         ## qembs: 300,64,128, qmasks: 300,64
         ## cembs: 300,100,330,128, cmasks: 300,100,330
 
         ## qembs is already masked out, and zeroed out
-        dp = torch.einsum("abc,adec->adbe",qembs,cembs.to(qembs.device))
-        masked = torch.where(cmasks.bool().to(qembs.device).unsqueeze(2),dp,-10)
-        partials = torch.cummax(torch.amax(masked,dim=3),dim=1)[0]
-        result_scores = torch.sum(partials,dim=2)
+        # dp = torch.einsum("abc,adec->adbe",qembs,cembs.to(qembs.device))
+        # masked = torch.where(cmasks.bool().to(qembs.device).unsqueeze(2),dp,-10)
+        # partials = torch.cummax(torch.amax(masked,dim=3),dim=1)[0]
+        # result_scores = torch.sum(partials,dim=2)
+
+        result_scores = chamfer_scores
         
         save((result_ids, result_scores), result_file_path)
         return result_ids, result_scores
@@ -380,22 +391,43 @@ class ColBERTBaselineWithRerank(ColBERTBaseline):
         qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
         # KN TODO : add an assert here perhaps
         
-        result_ids = self.search(qembs, k=self.config.colbert_topk)
+        # result_ids = self.search(qembs, k=self.config.colbert_topk)
+        result_ids = self.search(qembs, qmasks, k=self.config.k)
 
         ## compute real scores with opts
-        cembs, cmasks = self.embedder.get_corpus(result_ids)
+        # cembs, cmasks = self.embedder.get_corpus(result_ids)
+        if self.config.embedder.mode =="mem":
+            ## compute real scores with opts
+            cembs, cmasks = self.embedder.get_corpus(result_ids)
+        else:
+            corpus = self.embedder.get_corpus(result_ids)
+            logger.info("All required documents are loaded")
+            cembs = []
+            cmasks = []
+            for q_id in tqdm(range(qembs.shape[0]), desc="Processing queries"):
+                cemb, cmask = corpus[
+                    (q_id * torch.ones(result_ids.shape[1], dtype=torch.long, device=corpus.device)),
+                    torch.arange(result_ids.shape[1], dtype=torch.long, device=corpus.device)
+                ]
+
+                cembs.append(cemb)
+                cmasks.append(cmask)
+            cembs = torch.stack(cembs)
+            cmasks = torch.stack(cmasks)
+
         corp_size = len(cembs)
         ####
         optvec = -2*torch.ones(qembs.size(0),qembs.size(1),1).to(qembs.device)
-        opt_indices = -torch.ones(qembs.size(0),self.k).to(qembs.device)
-        opts_scores = -2000*torch.ones(qembs.size(0),self.k).to(qembs.device)
-        
-        for i in tqdm(range(self.k), desc="K", total=self.k):        
+        opt_indices = -torch.ones(qembs.size(0),self.config.k).to(qembs.device)
+        opts_scores = -2000*torch.ones(qembs.size(0),self.config.k).to(qembs.device)
+
+        result_ids = result_ids.to(qembs.device)
+        for i in tqdm(range(self.config.k), desc="K", total=self.config.k):        
             greedyvec , max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(query=qembs,query_masks=qmasks,max_gain_corpus=cembs,max_gain_corpus_masks=cmasks, running_optvec=optvec)
             
             optvec = torch.maximum(optvec,greedyvec.unsqueeze(-1).to(optvec.device))
 
-            real_indices = result_ids[torch.arange(qembs.size(0)), max_sim_indices]
+            real_indices = result_ids[torch.arange(qembs.size(0)).to(qembs.device), max_sim_indices.to(qembs.device)]
             opt_indices[:,i].copy_(real_indices,non_blocking=False)
             opts_scores[:, i].copy_(max_sim_scores, non_blocking=False)
         

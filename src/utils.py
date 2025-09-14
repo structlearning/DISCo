@@ -80,6 +80,27 @@ def partial_chamfer_sim_batched_with_rerank(query, query_masks,running_optvec, m
     return max_sim, max_sim_indices, max_sim_scores
 
 
+float32_min = -10
+# 1 query full corpus
+#query: (query_set_size,emb_dim) ; corpus: (corpus_num, corpus_set_size, emb_dim)
+def partial_chamfer_sim(query,corpus,cmasks,device=None,bs=1024):
+    #output: (query_set_size,corpus_num)
+    # computes the vector \max_{x \in corpus} <x,query>
+    out = torch.empty(query.size(0),corpus.size(0),dtype=query.dtype)
+    ## batch_size : 
+    # ##can decrease/increase this depending on the footprint you have available
+    if device is None:
+        device = query.device
+    else:
+        query = query.to(device)
+    for i,(corpus_batch,corpus_masks_batch) in enumerate(zip(batch_tensor(corpus,bs,device),batch_tensor(cmasks,bs,device))):
+        sim = torch.matmul(corpus_batch,query.T.to(dtype=corpus_batch.dtype)).permute(2, 0, 1)
+        # sim: (query_set_size,corpus_num,corpus_set_size)
+        masked_sim = torch.where(corpus_masks_batch.bool().unsqueeze(0), sim, float32_min)
+        out[:,i*bs:i*bs+corpus_batch.size(0)].copy_(torch.amax(masked_sim,dim=2),non_blocking=False)
+    torch.cuda.synchronize()
+    return out
+
 
 def batch_iterator(iterator, batch_size):
     # returns a generator that returns batches of size batch_size
