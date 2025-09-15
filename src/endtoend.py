@@ -11,11 +11,12 @@ from numpy.random import default_rng
 import submodlib
 import pickle
 
+from colbert.modeling.colbert import AugmentationMixin
 from .dataloader import get_dataloader
 from .embedder import ColBERTEmbedder
 from .state_saver import StateSaverSubmodlib, StateSaverGreedy
 
-from .utils import partial_chamfer_sim_batched_with_rerank
+from .utils import partial_chamfer_sim_batched_with_rerank, partial_chamfer_sim_batched_with_rerank_aug
 
 # 1) Make sure the env var is set *inside* Python too
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -31,6 +32,8 @@ def get_method(config):
         return GreedyBaseline_v0(config)
     elif name=="sml":
         return GreedyBaseline_submodlib(config)
+    elif name == "augmented":
+        return GreedyBaseline_augmented(config)
     else:
         raise ValueError(f"Unknown method: {name}")
 
@@ -453,6 +456,195 @@ class GreedyBaseline_v0(BaseE2E):
                     
                     opt_indices = opt_indices.cpu()
                     opts_scores = opts_scores.cpu()
+
+                    # print(opt_indices)
+
+                    # Combine into list of tuples - the way code is written earlier
+                    opts = [
+                        list(zip(opt_indices[i].tolist(), opts_scores[i].tolist()))
+                        for i in range(opt_indices.shape[0])
+                    ]
+                else:
+                    # opts = distributed_search(self.embedder, self.k, self.config.embedder.mode)
+                    pass
+
+        else: # random
+            if self.config.embedder.mode=="mem":
+                # for query_id in tqdm(range(chkpt,self.query_num)):
+                #     query = self.embedder.qembs[query_id][self.embedder.qmasks[query_id].bool()]
+                #     opts.append(self.get_single(query))
+                #     if (time.time() - lap)> 60*60 : # checkpoint every hour
+                #         save(opts,chkpath)
+                #         save({
+                #                 "completed_qid":query_id, 
+                #                 "seeds": {
+                #                 "random_seed": random.getstate(),
+                #                 "np_random__seed": np.random.get_state(),
+                #                 "torch_random_seed": torch.get_rng_state()}
+                #             },chklogpath)
+                #         logger.info(f"Checkpoint at query_id: {query_id} out of {self.query_num}")
+                #         lap = time.time()
+                qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
+                opts = self.get_batch(qembs,qmasks)
+            else: # mode = disk        
+                qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
+                opts = self.get_batch(qembs,qmasks)
+        end = time.time()
+        logger.info(f"Total time taken for running : {end-start} seconds")
+        save(opts,result_path)
+        return opts
+
+
+class GreedyBaseline_augmented(GreedyBaseline_v0, AugmentationMixin):
+    def __init__(self,config):
+        super().__init__(config)
+        # Remember to set dbl_norm to False.
+        self.suffix = f"_augmented_{self.config.num_rh_augment}"
+        self.state_saver = StateSaverGreedy(dataset=self.dataloader.dataset_name, greedy_bs=config.baseline.bucket_size,
+                                            num_rh_augment=self.config.num_rh_augment)
+
+    def run(self):
+        result_path = f"./pickles/results/{self.variety}_{self.dataloader.dataset_name}_{self.config.retriever.type}{self.suffix}.pkl"
+        if os.path.exists(result_path) and False:
+            logger.info("Loading existing results")
+            return load(result_path)
+        
+        self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode) 
+        self.batched = True
+        self.query_num = len(self.embedder.qembs)
+        # fetch from checkpoints
+        chkpt = 0
+        set_seed(self.config.baseline.seed)
+        opts = []
+        # XXX: Unused as we mostly use disk mode
+        chkpath = f"./pickles/results/{self.variety}_{self.dataloader.dataset_name}_{self.config.retriever.type}_aug_chkpt.pkl"
+        chklogpath = f"./pickles/results/{self.variety}_{self.dataloader.dataset_name}_{self.config.retriever.type}_aug_log.pkl"
+
+        if os.path.exists(chklogpath):
+            chklog = load(chklogpath)
+            opts = load(chkpath,"rb")
+            chkpt = chklog["completed_qid"] + 1 
+            set_seed_from_checkpoint(**chklog["seeds"])
+        
+        logger.info(f"Starting from query_id: {chkpt}")
+        start = time.time()
+        lap = start
+        ## speed this up with multiprocessing bruh
+        if self.config.baseline.bucket_size==0: # exact
+            if self.config.embedder.mode=="mem":
+                for query_id in tqdm(range(chkpt,self.query_num)):
+                    query = self.embedder.qembs[query_id][self.embedder.qmasks[query_id].bool()]
+                    opts.append(self.get_single_exact(query))
+                    # opts.append(self.get_single_exact_numpy(query.cpu().numpy()))
+                    if (time.time() - lap)> 60*60 : # checkpoint every hour
+                        save(opts,chkpath)
+                        save({
+                                "completed_qid":query_id, 
+                                "seeds": {
+                                "random_seed": random.getstate(),
+                                "np_random__seed": np.random.get_state(),
+                                "torch_random_seed": torch.get_rng_state()}
+                            },chklogpath)
+                        logger.info(f"Checkpoint at query_id: {query_id} out of {self.query_num}")
+                        lap = time.time()
+            else: # if embedder.mode = disk
+                if not self.config.baseline.distributed_search:
+                    if self.config.load_state:
+                        try:
+                            self.state_saver.unserialize()
+                        except FileNotFoundError:
+                            logger.warning("State file not found, starting from scratch")
+                            budget_iter = 0
+
+                            optvec = -2.0*torch.ones_like(self.embedder.qmasks).to(self.embedder.qembs.device)
+                            opt_indices = -torch.ones(self.embedder.qembs.size(0),self.k).to(self.embedder.qembs.device)
+                            opts_scores = -2000.0*torch.ones(self.embedder.qembs.size(0),self.k).to(self.embedder.qembs.device)
+
+                        else:
+                            budget_iter = self.state_saver.state["budget_iter"]
+                            optvec = self.state_saver.state["optvec"]
+                            opt_indices = self.state_saver.state["opt_indices"]
+                            opts_scores = self.state_saver.state["opts_scores"]
+                            logger.info(f"Loaded greedy stuff from state, budget iter: {budget_iter}")
+
+                            # Start from next budget iter
+                            budget_iter = budget_iter + 1
+                    else:
+                        budget_iter = 0
+                        optvec = -2.0*torch.ones_like(self.embedder.qmasks).to(self.embedder.qembs.device)
+                        opt_indices = -torch.ones(self.embedder.qembs.size(0),self.k).to(self.embedder.qembs.device)
+                        opts_scores = -2000.0*torch.ones(self.embedder.qembs.size(0),self.k).to(self.embedder.qembs.device)
+
+                    for i in tqdm(range(budget_iter, self.k), desc="K", total=self.k):
+                        temp_optvec = -2.0*torch.ones_like(self.embedder.qmasks).to(self.embedder.qembs.device)
+                        temp_opt_indices = -torch.ones(self.embedder.qembs.size(0)).to(self.embedder.qembs.device)
+                        temp_opts_scores = -2000.0*torch.ones(self.embedder.qembs.size(0)).to(self.embedder.qembs.device)
+                        doc_id = 0
+                        # Iterate over (batch, mini-batch, chunk)
+                        for cemb, cmask in tqdm(self.embedder.iterate_over_batches(self.device,self.config.embedder.mode),desc="Corpus"):      
+                            # A single chunk's worth of indices
+                            inds = torch.arange(doc_id, doc_id+cemb.shape[0])
+
+                            for q_id in tqdm(range(self.embedder.qembs.shape[0]), desc="Processing queries"):
+                                # Augment the query embedding and the corpus embedding
+                                qemb = self.embedder.qembs[q_id]
+
+                                qembs_augmented = []
+                                cembs_augmented = []
+                                self.RH = None
+
+                                for hyperplane_id in range(self.config.num_rh_augment):
+                                    qemb_augmented = self._RH_augmentation_query(qemb,
+                                        RH_file=f"./experiments/{self.config.data.dataset_name}/RH.{self.config.embedder.emb_dim}.{hyperplane_id}.pt",
+                                        generate_new_rh=False)
+                                    cemb_augmented = self._RH_augmentation_corpus(cemb,
+                                        RH_file=f"./experiments/{self.config.data.dataset_name}/RH.{self.config.embedder.emb_dim}.{hyperplane_id}.pt",
+                                        generate_new_rh=False)
+
+                                    self.RH = None
+                                    qembs_augmented.append(qemb_augmented)
+                                    cembs_augmented.append(cemb_augmented)
+
+                                qembs_augmented = torch.stack(qembs_augmented, dim=-1)  # Shape: (num_query_tokens, emb_dim, num_rh_augment)
+                                cembs_augmented = torch.stack(cembs_augmented, dim=-1)  # Shape: (num_corpus_items, num_corpus_tokens, emb_dim, num_rh_augment)
+
+                                max_sim_partial, max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank_aug(
+                                    qembs_augmented.unsqueeze(0), self.embedder.qmasks[q_id].unsqueeze(0),
+                                    optvec.unsqueeze(-1)[q_id].unsqueeze(0),
+                                    cembs_augmented.unsqueeze(0),
+                                    cmask.unsqueeze(0)
+                                )
+                                max_sim_indices = max_sim_indices.to("cpu")
+                                real_indices = inds[max_sim_indices]
+                                if torch.sum(max_sim_partial) > torch.sum(temp_optvec[q_id]):
+                                    temp_optvec[q_id] = max_sim_partial.squeeze(0).to(optvec.device)
+
+                                max_sim_scores = max_sim_scores.to(self.embedder.qembs.device)
+                                if max_sim_scores > temp_opts_scores[q_id]:
+                                    temp_opts_scores[q_id] = max_sim_scores
+                                    temp_opt_indices[q_id] = real_indices
+
+                            doc_id+=cemb.shape[0]
+                            
+                        opt_indices[:,i].copy_(temp_opt_indices,non_blocking=True)
+                        opts_scores[:, i].copy_(temp_opts_scores, non_blocking=True)
+                        optvec = torch.maximum(optvec, temp_optvec)
+                        # print(optvec)
+                        # with open(f"./disk_optvec_{i}.pkl", "wb") as f:
+                        #     pickle.dump(optvec, f)
+
+                        self.state_saver.pack_state(
+                            budget_iter=i,
+                            optvec=optvec,
+                            opt_indices=opt_indices,
+                            opts_scores=opts_scores
+                        )
+                        self.state_saver.serialize()
+                        logger.info(f"Saved state after budget iteration {i}")
+                    
+                    opt_indices = opt_indices.cpu()
+                    # Divide by 2 to deal with augmentation score inflation
+                    opts_scores = opts_scores.cpu() / 2
 
                     # print(opt_indices)
 

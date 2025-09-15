@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 class StateSaverBase(object):
     def __init__(self, *args, **kwargs):
         self.dataset = kwargs.get('dataset')
+        self.num_rh_augment = kwargs.get('num_rh_augment', 0)
         super().__init__()
         self.state = {}
 
@@ -17,6 +18,8 @@ class StateSaverBase(object):
         os.makedirs(self.prefix, exist_ok=True)
 
         self.path = f"{self.prefix}/{self.dataset}"
+        if self.num_rh_augment > 0:
+            self.path += f"_augmented_{self.num_rh_augment}"
 
     def serialize(self):
         """

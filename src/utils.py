@@ -80,6 +80,57 @@ def partial_chamfer_sim_batched_with_rerank(query, query_masks,running_optvec, m
     return max_sim, max_sim_indices, max_sim_scores
 
 
+def partial_chamfer_sim_batched_with_rerank_aug(query, query_masks, running_optvec, max_gain_corpus, max_gain_corpus_masks):
+    
+    float32_min = -10
+    device = torch.device("cuda")
+    
+    query = query.to(device)
+    query_masks = query_masks.to(device)
+    max_gain_corpus = max_gain_corpus.to(device)
+    max_gain_corpus_masks = max_gain_corpus_masks.to(device)
+    running_optvec = running_optvec.to(device)
+    # logger.debug(f"max_gain_corpus shape : {max_gain_corpus.shape}")
+    # logger.debug(f"query shap : {query.shape}")
+    
+    # Compute dot products between query tokens and corpus tokens.
+    # batch matrix multiplication:
+    sim = torch.einsum("qbcer,qser->qsbcr", max_gain_corpus, query)
+    # sim: query_num, query_set_size, bucket_size, corpus_set_size
+    
+    # Apply the query mask: expand from (query_num, query_set_size) to (query_num, query_set_size, 1, 1, 1)
+    # This will zero out any dot products for invalid query tokens.
+    sim_qmasked = sim * query_masks.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(dtype=sim.dtype)
+    
+    # For corpus tokens, we want to ignore invalid tokens.
+    # Expand the corpus mask from (query_num,bucket_size, corpus_set_size) to (query_num, 1, bucket_size, corpus_set_size, 1)
+    # and then use torch.where to replace dot products for invalid corpus tokens with -infinity.
+    sim_masked = torch.where(
+        max_gain_corpus_masks.unsqueeze(1).unsqueeze(-1).bool(), 
+        sim_qmasked, 
+        torch.full_like(sim_qmasked, float32_min)
+    )
+    
+    # For each query token, take the maximum dot product over corpus tokens (dimensions 3 and 4).
+    max_sim_0 = torch.amax(sim_masked, dim=[3, 4])*query_masks.unsqueeze(-1)  # Shape: (query_num, query_set_size, bucket_size)
+    # subtract the running optimum and relu to get the marginal score 
+    max_sim_0 = torch.maximum(max_sim_0, running_optvec)
+
+    scores = torch.sum(max_sim_0,dim=1) # shape: (query_num,bucket_size)
+    # save(scores, "debug_scores.pkl")
+    
+    max_sim_scores, max_sim_indices = torch.max(scores,dim=1) # shape: (query_num,)
+    # max_sim = (query_num,query_set_size,bucket_size[max_sim_indices])
+    # Extract the max values from max_sim_0 using max_sim_indices
+    query_num, query_set_size, _ = max_sim_0.shape
+    batch_indices = torch.arange(query_num).unsqueeze(1).expand(-1, query_set_size)  # Shape: (query_num, query_set_size)
+    
+    max_sim = max_sim_0[batch_indices, torch.arange(query_set_size).expand(query_num, -1), max_sim_indices.unsqueeze(1)]
+
+    return max_sim, max_sim_indices, max_sim_scores
+
+
+
 float32_min = -10
 # 1 query full corpus
 #query: (query_set_size,emb_dim) ; corpus: (corpus_num, corpus_set_size, emb_dim)
