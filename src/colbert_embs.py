@@ -504,6 +504,7 @@ class MuveraAugmented(ColBERTBaseE2E, AugmentationMixin):
         with torch.no_grad():
             aug_qembs = []
 
+            # TODO: Bug here on query-side augmentation. self.RH has to be set to None on every rh iteration.
             for i in range(self.config.num_rh_augment):
                 RH_file = f"./experiments/{self.config.data.dataset_name}/RH.{self.config.embedder.emb_dim}.{i}.pt"
                 augmented_qembs = self._RH_augmentation_query(qembs, RH_file=RH_file, generate_new_rh=False)

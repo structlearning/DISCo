@@ -9,7 +9,7 @@ from .dataloader import get_dataloader
 from .embedder import ColBERTEmbedder
 from .endtoend import BaseE2E
 from .colbert_embs import DummyQueryForColbert
-from .utils import save
+from .utils import partial_chamfer_sim, save
 
 import sys
 import os
