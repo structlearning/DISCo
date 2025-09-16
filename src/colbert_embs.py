@@ -44,6 +44,14 @@ class ColBERTBaseE2E(BaseE2E):
             self.mv_type = config.embedder.mv_type + "/norm" # Default COLBERT behaviour 
 
     def _init_searcher(self):
+        # If the index is generated on a server A and copied over to server B, then
+        # during search, the configuration that was saved with the index on server A
+        # will be loaded on server B, alongwith the current config being passed.
+        # One example is the `collection` property of the searcher which may come from the index
+        # if left unspecified here. This is a problem mainly for the LoTTE dataloader.
+        # We need to specify it manually here to avoid cross-server issues.
+        corpus_tsv_filename, _ = self.dataloader.get_tsv()
+
         if self.config.augment:
             # initialise i
             self.searcher = []
@@ -70,6 +78,7 @@ class ColBERTBaseE2E(BaseE2E):
                         checkpoint="ColBERT/colbertv2.0",
                         index=f"nbits={self.config.colbert.nbits}.aug{self.config.num_rh_augment}.{i}",
                         config=colbert_config,
+                        collection=corpus_tsv_filename,
                     ))
     
         else: # singule colbert index
@@ -85,7 +94,7 @@ class ColBERTBaseE2E(BaseE2E):
                     checkpoint="ColBERT/colbertv2.0",
                     # index=f"{self.mv_type}.{self.config.data.dataset_name}_nbits={self.config.colbert.nbits}.noaug",
                     index=f"nbits={self.config.colbert.nbits}.noaug",
-
+                    collection=corpus_tsv_filename,
                     config=colbert_config,
                 )
     
@@ -897,6 +906,14 @@ class ColBERT_internal(ColBERTAugmented):
         
     def _init_base_searcher(self):
         mv = self.mv_type.split("/")[0]+"/norm"
+
+        # If the index is generated on a server A and copied over to server B, then
+        # during search, the configuration that was saved with the index on server A
+        # will be loaded on server B, alongwith the current config being passed.
+        # One example is the `collection` property of the searcher which may come from the index
+        # if left unspecified here. This is a problem mainly for the LoTTE dataloader.
+        # We need to specify it manually here to avoid cross-server issues.
+        corpus_tsv_filename, _ = self.dataloader.get_tsv()
         with Run().context(RunConfig(nranks=1, experiment=f"{self.config.data.dataset_name}/{self.config.embedder.type}/{mv}")):
             colbert_config=ColBERTConfig(
                 nbits=self.config.colbert.nbits,
@@ -908,7 +925,7 @@ class ColBERT_internal(ColBERTAugmented):
                 checkpoint="ColBERT/colbertv2.0",
                 # index=f"{self.mv_type}.{self.config.data.dataset_name}_nbits={self.config.colbert.nbits}.noaug",
                 index=f"nbits={self.config.colbert.nbits}.noaug",
-
+                collection=corpus_tsv_filename,
                 config=colbert_config,
             )
     def run(self):
