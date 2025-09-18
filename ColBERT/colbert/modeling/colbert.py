@@ -43,16 +43,21 @@ class AugmentationMixin(object):
         embs = torch.cat([embs, reflect], dim=-1)
         return embs
 
-    def _RH_augmentation_corpus(self,embs):
+    def _RH_augmentation_corpus(self, embs, RH_file=None, generate_new_rh=None):
         # NOTE : INDRA
-        if self.colbert_config.dbl_norm:
+        if hasattr(self, 'colbert_config') and self.colbert_config.dbl_norm:
             embs[:,:,-1] = 0
             embs = torch.nn.functional.normalize(embs, p=2, dim=2)
 
         embs[:,:,-1] = -1
         if self.RH is None:
-            filename = self.colbert_config.RH_file
-            generate_new_rh = self.colbert_config.generate_new_rh
+            if RH_file is None:
+                filename = self.colbert_config.RH_file
+            else:
+                filename = RH_file
+
+            if generate_new_rh is None:
+                generate_new_rh = self.colbert_config.generate_new_rh
             assert filename is not None, "RH_file must be set in the config"
             if generate_new_rh:
                 import hashlib
