@@ -24,7 +24,7 @@ cd ~/CMUVERA_IR_ref
 echo "Arguments received: $1, $2, $3, $4, $5, $6, $7"
 
 # Run your command
-CUDA_VISIBLE_DEVICES=0 python3 -m src.endtoend k=15 method='sml' data.dataset_name=$1 embedder.mode="disk" submodlib.optimizer=ltl embedder.mv_type='colbertv2-plaid' load_state=$3 submodlib.path_suffix=$4 submodlib.stop_if_zero_gain=$5 submodlib.epsilon=0.1 data.loader_type=$7 data.query_type=$8 &
-CUDA_VISIBLE_DEVICES=1 python3 -m src.endtoend k=15 method='sml' data.dataset_name=$1 embedder.mode="disk" submodlib.optimizer=ltl embedder.mv_type='colbertv2-plaid' load_state=$3 submodlib.path_suffix=$4 submodlib.stop_if_zero_gain=$5 submodlib.epsilon=0.5 data.loader_type=$7 data.query_type=$8 &
-CUDA_VISIBLE_DEVICES=2 python3 -m src.endtoend k=15 method='sml' data.dataset_name=$1 embedder.mode="disk" submodlib.optimizer=ltl embedder.mv_type='colbertv2-plaid' load_state=$3 submodlib.path_suffix=$4 submodlib.stop_if_zero_gain=$5 submodlib.epsilon=0.9 data.loader_type=$7 data.query_type=$8 &
+# CUDA_VISIBLE_DEVICES=0 python3 -m src.endtoend k=10 method='sml' data.dataset_name=$1 embedder.mode="disk" submodlib.optimizer=ltl embedder.mv_type='colbertv2-plaid' load_state=$3 submodlib.path_suffix=submodlib_no_stop_eps0.1 submodlib.stop_if_zero_gain=$5 submodlib.epsilon=0.1 data.loader_type=$7 data.query_type=$8 &
+# CUDA_VISIBLE_DEVICES=1 python3 -m src.endtoend k=10 method='sml' data.dataset_name=$1 embedder.mode="disk" submodlib.optimizer=ltl embedder.mv_type='colbertv2-plaid' load_state=$3 submodlib.path_suffix=submodlib_no_stop_eps0.5 submodlib.stop_if_zero_gain=$5 submodlib.epsilon=0.5 data.loader_type=$7 data.query_type=$8 &
+CUDA_VISIBLE_DEVICES=2 python3 -m src.endtoend k=10 method='sml' data.dataset_name=$1 embedder.mode="disk" submodlib.optimizer=ltl embedder.mv_type='colbertv2-plaid' load_state=$3 submodlib.path_suffix=submodlib_no_stop_eps0.9 submodlib.stop_if_zero_gain=$5 submodlib.epsilon=0.9 data.loader_type=$7 data.query_type=$8 &
 wait
