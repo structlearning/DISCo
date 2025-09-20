@@ -283,6 +283,7 @@ class MuveraTopK(ColBERTBaseE2E):
         # Muvera FDE generation
 
         try:
+            # XXX: Below line is source of bug if embedder.num_queries is set in config.
             qembs_muvera = np.load(f"./pickles/muvera_query_embs_{self.config.data.dataset_name}.npy")
         except Exception as e:
             logger.error(f"Failed to load Muvera query embeddings: {e}")
