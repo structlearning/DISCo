@@ -184,6 +184,8 @@ class MuveraTopK(ColBERTBaseE2E):
                 self.index = faiss.read_index(self.index_path)
             except Exception as e:
                 logger.error(f"Failed to read index from {self.index_path}: {e}")
+            else:
+                logger.info(f"Loaded index from {self.index_path} successfully.")
 
         self.muvera_query_gen = FdeLateInteractionModel(self.config.muvera.num_repetitions,
                                                         self.config.muvera.num_simhash_projections,
@@ -238,6 +240,7 @@ class MuveraTopK(ColBERTBaseE2E):
         else:
             corpus = self.embedder.get_corpus(result_ids)
             logger.info("All required documents are loaded")
+            logger.info(f"Corpus shape : {corpus.idx.shape}")
             cembs = []
             cmasks = []
             for q_id in tqdm(range(qembs.shape[0]), desc="Processing queries"):

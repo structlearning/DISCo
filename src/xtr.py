@@ -116,12 +116,14 @@ class WarpBaseline(BaseE2E):
             index_name_=index_name,
         )
 
+        corpus_tsv_filename, _ = self.dataloader.get_tsv()
         self.searcher = warp.Searcher(
             checkpoint=self.config.embedder.model,
             index=index_name,
             index_root=index_root,
             config=warp_config,
             warp_engine=True,
+            collection=corpus_tsv_filename
         )
 
         result_file_path = f"./pickles/results/xtr_{self.variety}_{self.config.data.dataset_name}_k{self.config.k}{self.suffix}.pkl"
