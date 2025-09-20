@@ -39,6 +39,7 @@ embedder:
   mv_type: "colbertv2-plaid" # "colbertv2-base", "colbertv2-plaid", "xtr-base"
   emb_dim: 128
   query_batch_size: null
+  num_queries: None # for timing analysis
 
 muvera:
   num_reptitions: 20
@@ -51,6 +52,7 @@ submodlib:
   path_suffix: null
   stop_if_zero_gain: True
   epsilon: 0.1 # ltl, lazy and stochastic greedy
+  mega_q_batch_size: 100
 
 load_state: False # if True, load the state from the path specified in the state_saver
 

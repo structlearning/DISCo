@@ -238,6 +238,7 @@ class ColBERTEmbedder(BERTEmbedder):
         super().__init__(config)
         self.type = config.type
         self.mv_type = config.mv_type
+        self.timing_num_queries = config.num_queries
         # self.variety = "colbert"
         # self.compress = self.config.emb_dim != 768
         self.num_batches = None ## the batch size is determined by the files present, no changes are being made here
@@ -249,6 +250,9 @@ class ColBERTEmbedder(BERTEmbedder):
         ## use self.qembs, self.qmasks to get queries
         logger.info("Embedding queries")
         query_texts = list(query.values())
+        if self.timing_num_queries is not None and self.timing_num_queries < len(query_texts):
+            query_texts = query_texts[:self.timing_num_queries]
+            logger.info(f"Timing analysis: using only {self.timing_num_queries} queries")
         with Run().context(RunConfig(nranks=1, experiment=f"{self.dataset_name}")):
             #NOTE: AUGMENTATION IS OFF 
             config = ColBERTConfig(root="./colbert_beir_expts/", lin_dim=self.config.emb_dim)
@@ -257,6 +261,9 @@ class ColBERTEmbedder(BERTEmbedder):
             colbert_model = Checkpoint(colbert_config=config, name="ColBERT/colbertv2.0")
             with torch.inference_mode():
                 embs_dump, self.qembs, self.qmasks = colbert_model.queryFromText_modified(query_texts, bsize=self.config.query_batch_size)
+                if self.timing_num_queries == 1:
+                    self.qmasks = self.qmasks.unsqueeze(0)
+
                 embed_dump_path = f"{dump_path}/compressed_{self.config.emb_dim}"
                 mask_dump_path = f"{dump_path}/masks"
                 os.makedirs(embed_dump_path, exist_ok=True)

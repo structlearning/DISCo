@@ -857,7 +857,7 @@ class GreedyBaseline_submodlib(BaseE2E):
         else: # mode = disk
             query_sizes = self.embedder.qmasks.sum(dim=-1)
             ## MULTIPLE DISK PROBE VARIANT
-            mega_q_batch_size = 100
+            mega_q_batch_size = self.config.submodlib.mega_q_batch_size
             start = time.time()
 
             if self.config.load_state:
