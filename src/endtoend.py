@@ -698,6 +698,8 @@ class GreedyBaseline_submodlib(BaseE2E):
         elif config.submodlib.optimizer == 'naive':
             logger.warning("Naive optimizer is not recommended, proceeding with caution")
             self.optimizer = "NaiveGreedy"
+        elif config.submodlib.optimizer == 'stoc':
+            self.optimizer = "StochasticGreedy"
         else : 
             raise ValueError(f"This optimizer is not allowed: {config.submodlib.optimizer}")
         self.variety = f"greedy_submodlib_{self.optimizer}_k{config.k}"
