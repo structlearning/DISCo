@@ -10,6 +10,7 @@
 #SBATCH --output=logs/muvera-timing-%j.out  # Save stdout to logs/train-<jobid>.out
 #SBATCH --error=logs/muvera-timing-%j.err   # Save stderr to logs/train-<jobid>.err
 
+source ~/.bashrc
 # Don't try to ping the internet, all the data is already on disk
 export HF_HUB_OFFLINE=1
 
