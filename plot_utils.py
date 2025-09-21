@@ -6,6 +6,68 @@ import torch
 import numpy as np
 
 
+legend_labels = [
+    r'\textbf{DISC}',
+    r'\textbf{Exact Greedy}',
+    r'\textbf{Lazy Greedy}',
+    r'\textbf{Stochastic Greedy}',
+    r'\textbf{Lazier-than-lazy Greedy}',
+    r'\textbf{PLAID}',
+    r'\textbf{MUVERA}',
+    r'\textbf{WARP}',
+    r'\textbf{DECoR Late Pooling}',
+    r'\textbf{Gold Set}'
+]
+
+method_label_map = {
+    'submodlib lazy': legend_labels[2],
+    'submodlib stochastic 0.5': legend_labels[3],
+    'submodlib ltl 0.1': legend_labels[4] + r"\textbf{\epsilon=0.1}",
+    'submodlib ltl 0.5': legend_labels[4], # default, so no epsilon mentioned
+    'submodlib ltl 0.9': legend_labels[4] + r"\textbf{\epsilon=0.9}",
+    'exact greedy': legend_labels[1],
+    'WARP iid': legend_labels[7],
+    'MUVERA iid': legend_labels[6],
+    'ColBERT iid': legend_labels[5],
+    'ColBERT angiogram - 1': legend_labels[8],
+    # 'ColBERT angiogram - 10',
+    # 'ColBERT angiogram - 15',
+    # 'ColBERT angiogram - 20',
+    'ColBERT bypass - 10': legend_labels[0] + r"\textbf{(top_b=10)}",
+    'ColBERT bypass - 1': legend_labels[0],
+    'ColBERT bypass - 15': legend_labels[0] + r"\textbf{(top_b=15)}",
+    'gold': legend_labels[9]
+ }
+
+methods = ['submodlib lazy', 'submodlib stochastic 0.5', 'submodlib ltl 0.1', 'submodlib ltl 0.5', 'submodlib ltl 0.9', 'exact greedy', 'WARP iid', 'MUVERA iid', 'ColBERT iid', 'ColBERT bypass - 1', 'ColBERT angiogram - 1']
+
+legend_color_map = {
+    legend_labels[0]: "black",         # Black (your existing)
+    legend_labels[1]: "#2E86AB",       # Ocean Blue - professional and clear
+    legend_labels[2]: "#00CED1",       # Dark Turquoise (Bright Cyan) - very distinct and noticeable
+    legend_labels[3]: "#F18F01",       # Amber Orange - warm but not harsh
+    legend_labels[4]: "#C73E1D",       # Brick Red - strong contrast
+    legend_labels[5]: "#7209B7",       # Royal Purple - rich and distinct
+    legend_labels[6]: "#32CD32",       # Lime Green - bright and highly visible
+    legend_labels[7]: "#FF1493",       # Deep Pink (Hot Pink) - very noticeable and distinct
+    legend_labels[8]: "#6A4C93",       # Muted Purple - unique but not too bright
+    legend_labels[9]: "gold"           # Gold - stands out for the gold standard
+}
+
+legend_marker_map = {
+    legend_labels[0]: "o",
+    legend_labels[1]: "v",
+    legend_labels[2]: "v",
+    legend_labels[3]: "v",
+    legend_labels[4]: "v",
+    legend_labels[5]: "^",
+    legend_labels[6]: "*",
+    legend_labels[7]: "D",
+    legend_labels[8]: "o",
+    legend_labels[9]: "X",
+}
+
+
 def load_from_baseline(fname):
     with open(fname, 'rb') as f:
         p = pickle.load(f)
@@ -25,6 +87,40 @@ def load_from_file(filename, k=10):
     with open(filename, 'rb') as f:
         indices,scores = pickle.load(f)
         return indices.to(device="cpu",dtype=torch.int64),scores.cpu()
+
+
+def get_time_data(datasets):
+    max_time_vals = {ds: -1 for ds in datasets}
+    time_map = {ds: {} for ds in datasets}
+    # The times being stored are single query times for all methods.
+
+    # Collect submodlib and exact greedy results
+    for ds in datasets:
+        print(ds)
+        # these are comma separated value files with method name and time taken in seconds
+        with open(f"./timing_analysis_submodlib_{ds}.txt", "r") as f:
+            for idx, line in enumerate(f.readlines()):
+                if idx == 0:
+                    # skip header
+                    continue
+                method, time = line.strip().split(",")
+                time_map[ds][method.strip('"')] = float(time)
+                if float(time) > max_time_vals[ds]:
+                    max_time_vals[ds] = float(time)
+
+        # Collect all other results
+        with open(f"./timing_analysis_{ds}.txt", "r") as f:
+            for idx, line in enumerate(f.readlines()):
+                if idx == 0:
+                    # skip header
+                    continue
+                method, time = line.strip().split(",")
+                # since these methods were run for 100 queries each, we divide the time by 100 to get time per query
+                time_map[ds][method.strip('"')] = float(time) / 100
+                if float(time) / 100 > max_time_vals[ds]:
+                    max_time_vals[ds] = float(time) / 100
+
+    return time_map, max_time_vals
 
 
 def get_score_data(dataset, method, k=10):
@@ -90,8 +186,8 @@ def get_score_data(dataset, method, k=10):
             else:
                 inds, scores = load(os.path.join(path, filename))
 
-            inds = inds[:k]
-            scores = scores[:k]
+            inds = inds[:, :k]
+            scores = scores[:, :k]
         except FileNotFoundError:
             raise FileNotFoundError(f"k=15 file not found either: {os.path.join(path, filename)}")
         except Exception as e:

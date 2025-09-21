@@ -28,12 +28,21 @@ class BEIRDataLoader:
             self._load()
         return self._loader._load(split)
 
-    # only fetches corpus and query data without qrels for the given split
-    def get_data(self,split="test"):
+    def _get_data(self, split="test"):
         if self._loader is None:
             self._load()
         corpus,query,qrels = self._loader.load(split)
-        return corpus,query
+
+        return corpus, query, qrels
+
+    # only fetches corpus and query data without qrels for the given split
+    def get_data(self, split="test"):
+        corpus, query, _ = self._get_data(split=split)
+        return corpus, query
+
+    def get_qrels(self, split="test"):
+        _, _, qrels = self._get_data(split=split)
+        return qrels
     
     def _load(self):
         dataset_path = f"./data/{self.dataset_name}"
@@ -77,13 +86,29 @@ class LoTTEDataLoader:
         self.config = config
         self._loader = None
 
-    def get_data(self, split="test"):
+    def _get_data(self, split="test"):
         # We use the ir_datasets package to fetch.
         # IR_DATASETS_HOME must be set.
         dataset = ir_datasets.load(f"lotte/{self.dataset_name}/{split}/{self.query_type}")
+
+        return dataset
+
+    def get_data(self, split="test"):
+        dataset = self._get_data(split=split)
+
         corpus = {doc.doc_id: doc.text for doc in dataset.docs_iter()}
         queries = {query.query_id: query.text for query in dataset.queries_iter()}
         return corpus, queries
+
+    def get_qrels(self, split="test"):
+        dataset = self._get_data(split=split)
+        qrels = {}
+        for qrel in dataset.qrels_iter():
+            if qrel.query_id not in qrels:
+                qrels[qrel.query_id] = []
+            if qrel.relevance > 0:
+                qrels[qrel.query_id].append(qrel.doc_id)
+        return qrels
 
     def get_tsv(self, split="test"):
         # Triggers get_data before returning the tsv paths
