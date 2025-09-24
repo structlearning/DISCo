@@ -1,47 +1,93 @@
-# Coverage-based Multi-Vector Retrieval
+# A Dense Subset Index for Collective Query Coverage
+
+README associated with the paper.
 
 ### Folder Structure
 
-- **`ColBERT/`**: Contains the patched version of ColBERT-v2 + Plaid. You can install it as an editable package using:
-    ```bash
-    pip install -e ColBERT/
-    ```
-    (Note: `pip` may prompt you to use additional flags, so pay attention to the instructions.)
+.
+├── ColBERT
+│   ├── LICENSE
+│   ├── LoTTE.md
+│   ├── MANIFEST.in
+│   ├── README.md
+│   ├── colbert
+│   │   ├── __init__.py
+│   │   ├── distillation
+│   │   ├── evaluation
+│   │   ├── index.py
+│   │   ├── index_updater.py
+│   │   ├── indexer.py
+│   │   ├── indexing
+│   │   ├── infra
+│   │   ├── modeling
+│   │   ├── parameters.py
+│   │   ├── ranking
+│   │   ├── search
+│   │   ├── searcher.py
+│   │   ├── tests
+│   │   ├── trainer.py
+│   │   ├── training
+│   │   ├── utilities
+│   │   └── utils
+│   ├── conda_env.yml
+│   ├── conda_env_cpu.yml
+│   ├── server.py
+│   ├── setup.py
+│   └── utility
+│       ├── __init__.py
+│       ├── evaluate
+│       ├── preprocess
+│       ├── rankings
+│       ├── supervision
+│       └── utils
+├── README.md
+├── configs
+│   ├── colbert.yaml
+│   └── config.yaml
+├── disco_requirements_py3_10.txt
+├── disco_requirements_torch.txt
+├── plot_utils.py
+├── scripts
+│   └── install.sh
+└── src
+    ├── __init__.py
+    ├── calculate_docid_to_batch_info.py
+    ├── cmuvera.py
+    ├── colbert_embs.py
+    ├── dataloader.py
+    ├── embedder.py
+    ├── endtoend.py
+    ├── eval.py
+    ├── state_saver.py
+    ├── utils.py
+    └── xtr.py
 
-- **`data/`**: Stores the downloaded datasets. Currently, the BEIR datasets are loaded. Consider exploring the Lotte benchmarks as well. Indexing of the data is performed serially as specified in the relevant file.
+- **`ColBERT/`**: Contains code for the DISCo retrieval engine. It needs to be installed as an editable package. See scripts/install.sh.
 
-- **`experiments/`**: Used by ColBERT to store indices and embeddings.
+- **`data/`**: Stores the downloaded datasets, including the TSV files, for the BEIR benchmark. Make sure to create this folder at the start. For the LoTTE benchmark, you must specify IR_DATASETS_HOME in your .bashrc or your environment, so that the ir_datasets package can download the dataset files to the right location.
+
+- **`experiments/`**: Used by DISCo to store index related data, BERT embeddings and MUVERA encodings. Make sure to create this directory beforehand.
 
 - **`pickles/`**: Contains:
-    - `results/`: Stores indices and scores for different variants (note that some variants may have a different format).
-    - Other directories: Used by other variants, which are not relevant to ColBERT.
+    - `results/`: Stores solution sets and scores for different methods. Make sure to create this directory beforehand.
 
 - **`src/`**: Contains the main scripts:
     - `colbert_embs.py`
     - `endtoend.py`
+    and others.
     
     These scripts use separate configuration files. To run them, use:
     ```bash
     python3 -m src.filename overwrite.config.variables=values
     ```
     - `colbert.yml` is the associated config file for `colbert_embs.py`. `config.yml` is the associated config for `endtoend.py`
-    - For `colbert_embs.py`, run the `index` function for the classes in the script. Augmentation is handled within ColBERT. Note: Random hyperplane tensors are saved in the root directory due to a slight naming error, which can be corrected during code distillation.
+    - For `colbert_embs.py`, run the `index` function for the classes in the script. Augmentation is handled within DISCo.
+    - See the COMMANDS.md file for examples on every type of command, for one dataset from each benchmark.
 
-- **`testing/`**: Contains notebooks for loading results and plotting. `eval`,`eval_col`,`eval_col_2` are the notebooks of interest.
+### Other setup
 
-### Pertinent Issues
+Main environment variables: IR_DATASETS_HOME, XTR_WARP_PATH (put this on PYTHONPATH), VIRTUALENVS, SUBMODLIB.
 
-- The `embedder.py` file (required for reranking) needs to be made runnable in disk mode to handle large datasets.
-- Many computations currently run on the CPU (especially in rerank functions) to avoid GPU out-of-memory (OOM) errors. (This was necessary in the past week even for smaller datasets due to GPU congestion, things may be better now).
-- Batching over corpus items exists in the exact solver and some legacy code, which could potentially be reused to optimize performance.
+We provide modified copies of submodlib and WARP alongwith this code. To guarantee that everything works correctly and seamlessly, these copies must be used. submodlib will be installed as an editable package as part of the install script (after the SUBMODLIB env var for the location is specified), but WARP must be put on the pythonpath.
 
----
-
-### Other info
-- baseline(Exact) : endtoend.py , go from line 26
-- ColBERT: colbert_embs(): see __main__ . note to run .index() first
-
-
-
-
-
+We use the uv package manager for quick installation.
