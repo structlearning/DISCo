@@ -3,6 +3,8 @@ import pickle
 import os
 import numpy as np
 
+from plot_utils import load, load_from_baseline, load_from_file
+
 import plotly
 import plotly.graph_objects as go
 
@@ -241,116 +243,113 @@ def plot_b_vs_metric(dataset,k_values,b_values,norm_types:str|list=["norm","dbln
         jaccard_figs.write_image(f"plots/images/bvJ_{dataset}_dblnorm_k{k}_{'.'.join(map(str, b_values))}.jpeg")
         intersection_figs.write_html(f"plots/html/bvI_{dataset}_dblnorm_k{k}_{'.'.join(map(str, b_values))}.html")
         intersection_figs.write_image(f"plots/images/bvI_{dataset}_dblnorm_k{k}_{'.'.join(map(str, b_values))}.jpeg")
-        
 
-def plot_k_vs_metric(dataset, k, bsizes_aug=[10,25,50,100,200], bsizes_int=[1, 10, 15], norm_types:str|list=["norm","dblnorm"]):
-    if isinstance(norm_types,str):
-        norm_types = [norm_types]
-    score_plot = go.Figure()
-    for method in "LazyGreedy", "LazierThanLazyGreedy", "NaiveGreedy":
-        inds, scores = pickle.load(open(f"pickles/results/greedy_submodlib_{method}_k{k}_{dataset}_bf_k{k}_submodlib_no_stop.pkl", "rb"))
+
+def plot_k_vs_score(filename_one, filename_two, k, score_plot, plot_name):
+    try:
+        if plot_name == "Exact":
+            inds, scores = load_from_baseline(filename_one)
+        else:
+            inds, scores = load(filename_one)
+    except:
+        print(f"File not found: {filename_one}")
+        print(f"{plot_name} does not have k={k} data")
+
+        try:
+            if plot_name == "Exact":
+                inds, scores = load_from_baseline(filename_two)
+            else:
+                inds, scores = load(filename_two)
+        except:
+            print(f"k=15 file not found either: {filename_two}")
+            return
+
+        score_plot.add_trace(
+            go.Scatter(
+                x=np.arange(1, len(scores[:k]) + 1),
+                y=scores[:k].mean(dim=0).numpy(),
+                mode="lines+markers",
+                name=plot_name,
+                line=dict(width=1),
+            )
+        )
+    else:
         score_plot.add_trace(
             go.Scatter(
                 x=np.arange(1, len(scores) + 1),
                 y=scores.mean(dim=0).numpy(),
                 mode="lines+markers",
-                name=method,
+                name=plot_name,
                 line=dict(width=1),
             )
         )
-    exact_inds, exact_scores = load_from_baseline(f"pickles/results/greedy_base_0_128_k{k}_{dataset}_bf.pkl")
-    
-    score_plot.add_trace(
-        go.Scatter(
-            x=np.arange(1, len(exact_scores) + 1),
-            y=exact_scores.mean(dim=0).numpy(),
-            mode="lines+markers",
-            name="Exact",
-            line=dict(width=1),
-        )
-    )
 
+
+def plot_k_vs_metric(dataset, k, bsizes_aug=[10,25,50,100,200], bsizes_int=[1, 10, 15], norm_types:str|list=["norm","dblnorm"]):
+    if isinstance(norm_types,str):
+        norm_types = [norm_types]
+    score_plot = go.Figure()
+    # for method in "LazyGreedy", "LazierThanLazyGreedy", "NaiveGreedy":
+    # # for method in "LazyGreedy", "NaiveGreedy":
+    #     inds, scores = pickle.load(open(f"pickles/results/greedy_submodlib_{method}_k{k}_{dataset}_bf_k{k}_submodlib_no_stop.pkl", "rb"))
+    #     score_plot.add_trace(
+    #         go.Scatter(
+    #             x=np.arange(1, len(scores) + 1),
+    #             y=scores.mean(dim=0).numpy(),
+    #             mode="lines+markers",
+    #             name=method,
+    #             line=dict(width=1),
+    #         )
+    #     )
+    plot_k_vs_score(
+        f"pickles/results/greedy_base_0_128_k{k}_{dataset}_bf.pkl",
+        f"pickles/results/greedy_base_0_128_k15_{dataset}_bf.pkl",
+        k, score_plot, "Exact")
     mvt = "plaid"
 
-    colbert_inds, colbert_scores = load(f"pickles/results/BERT/colbertv2-{mvt}/norm_base_n2_d128_{dataset}_k{k}.pkl")
-    score_plot.add_trace(
-        go.Scatter(
-            x=np.arange(1, len(colbert_scores) + 1),
-            y=colbert_scores.cpu().mean(dim=0).numpy(),
-            mode="lines+markers",
-            name=f"ColBERT iid",
-            line=dict(width=1),
-        )
+    plot_k_vs_score(
+        f"pickles/results/BERT/colbertv2-{mvt}/norm_base_n2_d128_{dataset}_k{k}.pkl",
+        f"pickles/results/BERT/colbertv2-{mvt}/norm_base_n2_d128_{dataset}_k15.pkl",
+        k, score_plot, "ColBERT iid"
     )
 
-    muvera_inds, muvera_scores = load(f"pickles/results/BERT/muvera_iid_{dataset}_k{k}.pkl")
-    score_plot.add_trace(
-        go.Scatter(
-            x=np.arange(1, len(muvera_scores) + 1),
-            y=muvera_scores.cpu().mean(dim=0).numpy(),
-            mode="lines+markers",
-            name=f"MUVERA iid",
-            line=dict(width=1),
-        )
+    plot_k_vs_score(
+        f"pickles/results/BERT/muvera_iid_{dataset}_k{k}.pkl",
+        f"pickles/results/BERT/muvera_iid_{dataset}_k15.pkl",
+        k, score_plot, "MUVERA iid"
     )
 
-    warp_inds, warp_scores = load(f"pickles/results/xtr_colbertv2-plaid_{dataset}_k{k}.pkl")
-    score_plot.add_trace(
-        go.Scatter(
-            x=np.arange(1, len(warp_scores) + 1),
-            y=warp_scores.cpu().mean(dim=0).numpy(),
-            mode="lines+markers",
-            name=f"WARP iid (BERT)",
-            line=dict(width=1),
-        )
+    plot_k_vs_score(
+        f"pickles/results/xtr_colbertv2-plaid_{dataset}_k{k}_xtr-base-en.pkl",
+        f"pickles/results/xtr_colbertv2-plaid_{dataset}_k15_xtr-base-en.pkl",
+        k, score_plot, "WARP iid (XTR T5)"
     )
 
-    warp_inds, warp_scores = load(f"pickles/results/xtr_colbertv2-plaid_{dataset}_k{k}_xtr-base-en.pkl")
-    score_plot.add_trace(
-        go.Scatter(
-            x=np.arange(1, len(warp_scores) + 1),
-            y=warp_scores.cpu().mean(dim=0).numpy(),
-            mode="lines+markers",
-            name=f"WARP iid (XTR T5)",
-            line=dict(width=1),
-        )
-    )
-
-    # For now, Muvera augmented only topK=200
-    muvera_aug_inds, muvera_aug_scores = load(f"pickles/results/BERT/muvera_aug_{dataset}_k{k}.pkl")
-    score_plot.add_trace(
-        go.Scatter(
-            x=np.arange(1, len(muvera_aug_scores) + 1),
-            y=muvera_aug_scores.cpu().mean(dim=0).numpy(),
-            mode="lines+markers",
-            name=f"Muvera Augmented - topK = 200",
-            line=dict(width=1),
-        )
-    )
+    # # For now, Muvera augmented only topK=200
+    # muvera_aug_inds, muvera_aug_scores = load(f"pickles/results/BERT/muvera_aug_{dataset}_k{k}.pkl")
+    # score_plot.add_trace(
+    #     go.Scatter(
+    #         x=np.arange(1, len(muvera_aug_scores) + 1),
+    #         y=muvera_aug_scores.cpu().mean(dim=0).numpy(),
+    #         mode="lines+markers",
+    #         name=f"Muvera Augmented - topK = 200",
+    #         line=dict(width=1),
+    #     )
+    # )
     
     for norm_type in norm_types:
         for bsize in bsizes_aug:
-            aug_inds, aug_scores = load(f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_aug_n2_d128_rh8_threshold1_{dataset}_k{k}_rerankperh{bsize}.pkl")
-            score_plot.add_trace(
-                go.Scatter(
-                    x=np.arange(1, len(aug_scores) + 1),
-                    y=aug_scores.mean(dim=0).numpy(),
-                    mode="lines+markers",
-                    name=f"Angiogram - topK = {bsize}",
-                    line=dict(width=1),
-                )
+            plot_k_vs_score(
+                f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_aug_n2_d128_rh8_threshold1_{dataset}_k{k}_rerankperh{bsize}.pkl",
+                f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_aug_n2_d128_rh8_threshold1_{dataset}_k15_rerankperh{bsize}.pkl",
+                k, score_plot, f"Angiogram - topK = {bsize}"
             )
 
         for bsize in bsizes_int:
-            aug_inds, aug_scores = load(f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_int_n2_d128_rh8_intTrue_extTrue_{dataset}_k{k}_rerankperh{bsize}.pkl")
-            score_plot.add_trace(
-                go.Scatter(
-                    x=np.arange(1, len(aug_scores) + 1),
-                    y=aug_scores.mean(dim=0).numpy(),
-                    mode="lines+markers",
-                    name=f"Bypass - topK = {bsize}",
-                    line=dict(width=1),
-                )
+            plot_k_vs_score(
+                f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_int_n2_d128_rh8_intTrue_extTrue_{dataset}_k{k}_rerankperh{bsize}.pkl",
+                f"pickles/results/BERT/colbertv2-{mvt}/{norm_type}_int_n2_d128_rh8_intTrue_extTrue_{dataset}_k15_rerankperh{bsize}.pkl",
+                k, score_plot, f"Bypass - topK = {bsize}"
             )
 
     score_plot.update_layout(
@@ -640,39 +639,20 @@ def plot_b_vs_metric_all(dataset):
         intersection_figs.write_image(f"plots/images/bvI_{data}_{nname}_k{k}_{'.'.join(map(str, b_values))}.jpeg")
 
 
-###### 
-def load_from_baseline(fname):
-    with open(fname, 'rb') as f:
-        p = pickle.load(f)
-        p = torch.tensor(p)
-        indices = p[:,:,0]
-        scores = p[:,:,1]
-        return indices.to(torch.int64),scores
-    
-def load(fname):
-    with open(fname, 'rb') as f:
-        p = pickle.load(f)
-        return p
-    
-def load_from_file(filename):
-    with open(filename, 'rb') as f:
-        indices,scores = pickle.load(f)
-        return indices.to(device="cpu",dtype=torch.int64),scores.cpu()
-######
-
-
 if __name__ == "__main__":
     os.makedirs("plots/html",exist_ok=True)
     os.makedirs("plots/images",exist_ok=True)   
     # Load the data
-    # datasets = ["nfcorpus","scifact"]
+    # datasets = ["nfcorpus"]
     # datasets = ["hotpotqa", "fever", "msmarco"]
-    datasets = ["hotpotqa"]
+    datasets = ["pooled", "science", "technology", "writing"]
     # b_sizes_aug = [10,25,50,100,200]
-    b_sizes_aug = [200, 500, 1000, 2000, 5000]
-    b_sizes_int = [1, 10, 15]
+    # b_sizes_aug = [200, 500, 1000, 2000, 5000]
+    # b_sizes_aug = [1, 10, 15, 20]
+    b_sizes_aug = [1, 10, 15, 20]
+    b_sizes_int = [1, 10, 15, 20]
     k_values=[5,10,15]
-    max_k = 15
+    max_k = 10
     for data in datasets:
         plot_k_vs_metric(data, max_k, b_sizes_aug, b_sizes_int, norm_types=["dblnorm"])
         # plot_b_vs_metric(data,k_values,b_sizes_aug)
