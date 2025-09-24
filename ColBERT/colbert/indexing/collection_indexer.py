@@ -371,12 +371,12 @@ class CollectionIndexer():
                 #  embs_file_prefix = os.path.basename(os.path.dirname(self.config.index_path_)) +\
                     # "/colbert." + self.config.index_path_.split('.', 1)[1].rsplit('_', 1)[0] + "_embs"
                     
-                # Run().print_main(f"DEBUG: INDRA os.path.dirname(self.config.index_path_): {os.path.dirname(self.config.index_path_)}") 
-                # Run().print_main(f"DEBUG: INDRA self.config.index_path_: {self.config.index_path_}")
-                # Run().print_main(f"DEBUG: INDRA embs_file_prefix: {embs_file_prefix}")
+                # Run().print_main(f"DEBUG: XXXX os.path.dirname(self.config.index_path_): {os.path.dirname(self.config.index_path_)}") 
+                # Run().print_main(f"DEBUG: XXXX self.config.index_path_: {self.config.index_path_}")
+                # Run().print_main(f"DEBUG: XXXX embs_file_prefix: {embs_file_prefix}")
                 Run().print_main(f"#> Index path: {self.config.index_path_}")   
                 # exit(1)
-                Run().print_main(f" DEBUG INDRA: embs_file_prefix: {embs_file_prefix}")
+                Run().print_main(f" DEBUG XXXX: embs_file_prefix: {embs_file_prefix}")
 
                 os.makedirs(embs_file_prefix, exist_ok=True)
                 # Encode passages into embeddings with the checkpoint model

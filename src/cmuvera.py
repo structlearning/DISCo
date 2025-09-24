@@ -24,7 +24,7 @@ def get_muvera(config, colbert_config):
 
 
 def _RH_augmentation_corpus(embs, colbert_config, config, embedder, ret_masks=True):
-    # NOTE : INDRA
+    # NOTE : XXXX
     if colbert_config.dbl_norm:
         embs[:,:,-1] = 0
         embs = torch.nn.functional.normalize(embs, p=2, dim=2)

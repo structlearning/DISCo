@@ -44,7 +44,7 @@ class AugmentationMixin(object):
         return embs
 
     def _RH_augmentation_corpus(self, embs, RH_file=None, generate_new_rh=None):
-        # NOTE : INDRA
+        # NOTE : XXXX
         if hasattr(self, 'colbert_config') and self.colbert_config.dbl_norm:
             embs[:,:,-1] = 0
             embs = torch.nn.functional.normalize(embs, p=2, dim=2)
