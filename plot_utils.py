@@ -7,7 +7,7 @@ import numpy as np
 
 
 legend_labels = [
-    r'\textbf{DISC}',
+    r'\textbf{DISCo}',
     r'\textbf{Exact Greedy}',
     r'\textbf{Lazy Greedy}',
     r'\textbf{Stochastic Greedy}',
@@ -15,7 +15,7 @@ legend_labels = [
     r'\textbf{PLAID}',
     r'\textbf{MUVERA}',
     r'\textbf{WARP}',
-    r'\textbf{DECoR Late Pooling}',
+    r'\textbf{Late Pool}',
     r'\textbf{Gold Set}'
 ]
 
@@ -30,12 +30,12 @@ method_label_map = {
     'MUVERA iid': legend_labels[6],
     'ColBERT iid': legend_labels[5],
     'ColBERT angiogram - 1': legend_labels[8],
-    # 'ColBERT angiogram - 10',
-    # 'ColBERT angiogram - 15',
-    # 'ColBERT angiogram - 20',
-    'ColBERT bypass - 10': legend_labels[0] + r"\textbf{(top_b=10)}",
+    'ColBERT angiogram - 10': legend_labels[8] + r",\ \textbf{n\textquotesingle = 10}",
+    'ColBERT angiogram - 15': legend_labels[8] + r",\ \textbf{n\textquotesingle = 15}",
+    'ColBERT angiogram - 20': legend_labels[8] + r",\ \textbf{n\textquotesingle = 20}",
     'ColBERT bypass - 1': legend_labels[0],
-    'ColBERT bypass - 15': legend_labels[0] + r"\textbf{(top_b=15)}",
+    'ColBERT bypass - 10': legend_labels[0] + r"\ \textbf{(n\textquotesingle = 10)}",
+    'ColBERT bypass - 15': legend_labels[0] + r"\ \textbf{(n\textquotesingle = 15)}",
     'gold': legend_labels[9]
  }
 
@@ -43,6 +43,8 @@ methods = ['submodlib lazy', 'submodlib stochastic 0.5', 'submodlib ltl 0.1', 's
 
 legend_color_map = {
     legend_labels[0]: "black",         # Black (your existing)
+    legend_labels[0] + r"\ \textbf{(n\textquotesingle = 10)}": "green",         # Black (your existing)
+    legend_labels[0] + r"\ \textbf{(n\textquotesingle = 15)}": "red",         # Black (your existing)
     legend_labels[1]: "#2E86AB",       # Ocean Blue - professional and clear
     legend_labels[2]: "#00CED1",       # Dark Turquoise (Bright Cyan) - very distinct and noticeable
     legend_labels[3]: "#F18F01",       # Amber Orange - warm but not harsh
@@ -50,12 +52,17 @@ legend_color_map = {
     legend_labels[5]: "#7209B7",       # Royal Purple - rich and distinct
     legend_labels[6]: "#32CD32",       # Lime Green - bright and highly visible
     legend_labels[7]: "#FF1493",       # Deep Pink (Hot Pink) - very noticeable and distinct
-    legend_labels[8]: "#6A4C93",       # Muted Purple - unique but not too bright
+    legend_labels[8]: "green",       # Muted Purple - unique but not too bright
+    legend_labels[8] + r",\ \textbf{n\textquotesingle = 10}": "#90E0EF",       # Muted Purple - unique but not too bright
+    legend_labels[8] + r",\ \textbf{n\textquotesingle = 15}": "red",       # Muted Purple - unique but not too bright
+    legend_labels[8] + r",\ \textbf{n\textquotesingle = 20}": "magenta",       # Muted Purple - unique but not too bright
     legend_labels[9]: "gold"           # Gold - stands out for the gold standard
 }
 
 legend_marker_map = {
     legend_labels[0]: "o",
+    legend_labels[0] + r"\ \textbf{(n\textquotesingle = 10)}": "o",
+    legend_labels[0] + r"\ \textbf{(n\textquotesingle = 15)}": "o",
     legend_labels[1]: "v",
     legend_labels[2]: "v",
     legend_labels[3]: "v",
@@ -63,7 +70,10 @@ legend_marker_map = {
     legend_labels[5]: "^",
     legend_labels[6]: "*",
     legend_labels[7]: "D",
-    legend_labels[8]: "o",
+    legend_labels[8]: "D",
+    legend_labels[8] + r",\ \textbf{n\textquotesingle = 10}": "D",
+    legend_labels[8] + r",\ \textbf{n\textquotesingle = 15}": "D",
+    legend_labels[8] + r",\ \textbf{n\textquotesingle = 20}": "D",
     legend_labels[9]: "X",
 }
 
