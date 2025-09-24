@@ -42,7 +42,7 @@ embedder:
   num_queries: null # for timing analysis
 
 muvera:
-  num_reptitions: 20
+  num_repetitions: 20
   num_simhash_projections: 5
   projection_dimension: 20
   final_projection_dimension: 2560
