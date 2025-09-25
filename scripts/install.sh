@@ -5,15 +5,15 @@ echo "virtualenv directory path: $VIRTUALENVS"
 echo "submodlib library directory path: $SUBMODLIB"
 
 # Set your virtualenv directory name here
-VENV_NAME="muvera"
+VENV_NAME="disco"
 echo "virtualenv name: $VENV_NAME"
 
 # We use uv as our package manager.
 uv venv $VIRTUALENVS/$VENV_NAME --python 3.10
 source $VIRTUALENVS/$VENV_NAME/bin/activate
 
-uv pip install -r muvera_requirements_py3_10.txt --index-strategy unsafe-best-match
-uv pip install -r muvera_requirements_torch.txt --index-strategy unsafe-best-match
+uv pip install -r disco_requirements_py3_10.txt --index-strategy unsafe-best-match
+uv pip install -r disco_requirements_torch.txt --index-strategy unsafe-best-match
 
 # Install from ColBERT and submodlib directories.
 # Note that in the case of WARP, we only need to clone it .

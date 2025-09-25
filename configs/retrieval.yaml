@@ -28,8 +28,8 @@ colbert:
   save_full_embs: False #TODO: remove redundancy 
   normalize_q : True # Normalise augmented queries before sending over to colbert
 
-# only valid for colbert_internal
-colbert_internal:
+# only valid for disco
+disco:
   rerank_internal: False ## rerank on the colbert score
   ## rerank_internal -> rerank on compressed embeddings, top-1 (reranking)
   rerank_external: True ## rerank by us on the external score

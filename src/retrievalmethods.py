@@ -11,7 +11,7 @@ from colbert.modeling.colbert import AugmentationMixin
 from src.cmuvera import FdeLateInteractionModel
 from src.dataloader import get_dataloader
 from src.embedder import ColBERTEmbedder
-from src.endtoend import BaseE2E
+from src.greedymethods import BaseE2E
 from src.utils import partial_chamfer_sim, partial_chamfer_sim_batched_with_rerank, rowwise_union_padded, save
 import pickle
 from tqdm import tqdm
@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 ##############################################################################
-# Base class that uses colbert for searching
-class ColBERTBaseE2E(BaseE2E):
+# Base class that uses colbert/other MV engine for searching
+class MVBaseE2E(BaseE2E):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
@@ -173,7 +173,7 @@ class DummyQueryForColbert:
         return f"dummy_provenance_sized{self.size}"
 
 
-class MuveraTopK(ColBERTBaseE2E):
+class MuveraTopK(MVBaseE2E):
     def __init__(self, config):
         super().__init__(config)
 
@@ -323,7 +323,7 @@ class MuveraTopK(ColBERTBaseE2E):
 
 
 ## Just topk with no augmentation
-class ColBERTBaseline(ColBERTBaseE2E):
+class ColBERTBaseline(MVBaseE2E):
     def __init__(self, config):
         super().__init__(config)
         self.variety = f"{self.mv_type}_base_n{self.config.colbert.nbits}_d{self.config.embedder.emb_dim}"
@@ -405,66 +405,6 @@ class ColBERTBaseline(ColBERTBaseE2E):
         return result_ids, result_scores
 
 
-## Picks a larger top-b ( colbert_topk ) then performs a greedy marginal gain search in the top-b
-
-class ColBERTBaselineWithRerank(ColBERTBaseline):
-    def __init__(self, config):
-        super().__init__(config)
-        self.variety = f"{self.mv_type}_rerank_n{self.config.colbert_topk}_d{self.config.embedder.emb_dim}"
-    def run(self):
-        self._init_searcher()
-        result_file_path = f"./pickles/results/{self.config.embedder.type}/{self.variety}_{self.config.data.dataset_name}_k{self.config.k}{self.suffix}.pkl"
-        
-        self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode)
-        qembs, qmasks = self.embedder.qembs, self.embedder.qmasks
-        # YYYY TODO : add an assert here perhaps
-        
-        # result_ids = self.search(qembs, k=self.config.colbert_topk)
-        result_ids = self.search(qembs, qmasks, k=self.config.k)
-
-        ## compute real scores with opts
-        # cembs, cmasks = self.embedder.get_corpus(result_ids)
-        if self.config.embedder.mode =="mem":
-            ## compute real scores with opts
-            cembs, cmasks = self.embedder.get_corpus(result_ids)
-        else:
-            corpus = self.embedder.get_corpus(result_ids)
-            logger.info("All required documents are loaded")
-            cembs = []
-            cmasks = []
-            for q_id in tqdm(range(qembs.shape[0]), desc="Processing queries"):
-                cemb, cmask = corpus[
-                    (q_id * torch.ones(result_ids.shape[1], dtype=torch.long, device=corpus.device)),
-                    torch.arange(result_ids.shape[1], dtype=torch.long, device=corpus.device)
-                ]
-
-                cembs.append(cemb)
-                cmasks.append(cmask)
-            cembs = torch.stack(cembs)
-            cmasks = torch.stack(cmasks)
-
-        corp_size = len(cembs)
-        ####
-        optvec = -2*torch.ones(qembs.size(0),qembs.size(1),1).to(qembs.device)
-        opt_indices = -torch.ones(qembs.size(0),self.config.k).to(qembs.device)
-        opts_scores = -2000*torch.ones(qembs.size(0),self.config.k).to(qembs.device)
-
-        result_ids = result_ids.to(qembs.device)
-        for i in tqdm(range(self.config.k), desc="K", total=self.config.k):        
-            greedyvec , max_sim_indices, max_sim_scores = partial_chamfer_sim_batched_with_rerank(query=qembs,query_masks=qmasks,max_gain_corpus=cembs,max_gain_corpus_masks=cmasks, running_optvec=optvec)
-            
-            optvec = torch.maximum(optvec,greedyvec.unsqueeze(-1).to(optvec.device))
-
-            real_indices = result_ids[torch.arange(qembs.size(0)).to(qembs.device), max_sim_indices.to(qembs.device)]
-            opt_indices[:,i].copy_(real_indices,non_blocking=False)
-            opts_scores[:, i].copy_(max_sim_scores, non_blocking=False)
-        
-        ####
-        
-        save((opt_indices, opts_scores), result_file_path)
-        return opt_indices, opts_scores
-
-
 def search_muvera_worker_for_th(qembs_muvera, k, index, rh):
     logger.info(f"Searching Muvera index {rh} for top-k results...")
     start = time.time()
@@ -484,8 +424,8 @@ def search_muvera_worker_for_th(qembs_muvera, k, index, rh):
     logger.info(f"Muvera search on index {rh} completed in {end - start:.2f} seconds.")
     return ids
 
-
-class MuveraAugmented(ColBERTBaseE2E, AugmentationMixin):
+## MUVERA on augmented embeddings
+class MuveraAugmented(MVBaseE2E, AugmentationMixin):
     def __init__(self, config):
         super().__init__(config)
         # XXX: not used directly
@@ -704,7 +644,7 @@ def search_worker_for_th(searcher, queries, qembs, qmasks, k):
         return searcher.search_all_modified(queries, qembs, qmasks, k, normalize_q = config.colbert.normalize_q).todict()
 
 ### Augmented implementation
-class ColBERTAugmented(ColBERTBaseE2E):
+class LatePoolDISCo(MVBaseE2E):
     def __init__(self, config):
         super().__init__(config)
         self.variety = f"{self.mv_type}_aug_n{self.config.colbert.nbits}_d{self.config.embedder.emb_dim}_rh{self.config.num_rh_augment}"
@@ -843,7 +783,8 @@ class ColBERTAugmented(ColBERTBaseE2E):
         save((opt_inds,opt_scores), result_file_path)
         return opt_inds, opt_scores
     
-class ColBERTaugwiththreshold(ColBERTAugmented):
+## LatePool that makes use of threshold based selection at the pooling step.
+class LatePoolDISCo_thresholded(LatePoolDISCo):
     def __init__(self, config):
         super().__init__(config)
         self.variety = f"{self.mv_type}_aug_n{self.config.colbert.nbits}_d{self.config.embedder.emb_dim}_rh{self.config.num_rh_augment}_threshold{self.config.threshold}"
@@ -902,11 +843,11 @@ class ColBERTaugwiththreshold(ColBERTAugmented):
         # convert merged_ids to the required format
         return torch.tensor(result)
     
-class ColBERT_internal(ColBERTAugmented):
+class DISCo(LatePoolDISCo):
     def __init__(self, config):
         super().__init__(config)
-        self.variety = f"{self.mv_type}_int_n{self.config.colbert.nbits}_d{self.config.embedder.emb_dim}_rh{self.config.num_rh_augment}_int{config.colbert_internal.rerank_internal}_ext{config.colbert_internal.rerank_external}"
-        assert config.colbert_internal.rerank_external or config.colbert_internal.rerank_internal
+        self.variety = f"{self.mv_type}_int_n{self.config.colbert.nbits}_d{self.config.embedder.emb_dim}_rh{self.config.num_rh_augment}_int{config.disco.rerank_internal}_ext{config.disco.rerank_external}"
+        assert config.disco.rerank_external or config.disco.rerank_internal
         
     def _init_base_searcher(self):
         mv = self.mv_type.split("/")[0]+"/norm"
@@ -950,7 +891,7 @@ class ColBERT_internal(ColBERTAugmented):
             for i in tqdm(range(self.config.k)):
                 logger.info(f"Running iteration {i+1}/{self.config.k}")
                 # qembs[:,:,-1] = optvec # THIS STEP IS NOT NEEDED FOR INTERNAL
-                # k = self.config.colbert_topk if self.config.colbert_internal.rerank_external else 1
+                # k = self.config.colbert_topk if self.config.disco.rerank_external else 1
                 inds = self.search(qembs, k=self.config.colbert_topk, opt_vec = optvec)
                 # YYYY TODO: save stats?
                 # save(inds,"debug_inds.pkl")
@@ -1017,10 +958,10 @@ class ColBERT_internal(ColBERTAugmented):
         ## the "augmented" indices are only used for candidate gen
         aggregated_ids, aggregated_scores = self._aggregate_over_indices(
                                     self._parallel_search(query2, k),
-                                    prune_candidates=self.config.colbert_internal.prune_candidates
+                                    prune_candidates=self.config.disco.prune_candidates
                             )
         
-        if (not self.config.colbert_internal.rerank_internal):
+        if (not self.config.disco.rerank_internal):
             return aggregated_ids, aggregated_scores
         ## rerank over the base index
         pids, scores = self.base_searcher.rank_modified(query, opt_vec, pids=aggregated_ids)
@@ -1099,19 +1040,19 @@ class ColBERT_internal(ColBERTAugmented):
             
             with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
                 futures = [
-                executor.submit(candidate_worker_for_mp, i, self.config, qembs, k, self.config.colbert_internal.prune_candidates)
+                executor.submit(candidate_worker_for_mp, i, self.config, qembs, k, self.config.disco.prune_candidates)
                 for i in range(self.config.num_rh_augment)
                 ]
                 all_ids = [future.result() for future in concurrent.futures.as_completed(futures)]
         elif self.config.parallelization == "thread":
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = [
-                executor.submit(candidate_worker_for_th, self.searcher[i], qembs, k, self.config.colbert_internal.prune_candidates)
+                executor.submit(candidate_worker_for_th, self.searcher[i], qembs, k, self.config.disco.prune_candidates)
                 for i in range(self.config.num_rh_augment)
                 ]
                 all_ids = [future.result() for future in concurrent.futures.as_completed(futures)]
         elif self.config.parallelization == "none":
-            all_ids = [self.searcher[i].gen_candidates(qembs, k, self.config.colbert_internal.prune_candidates) for i in range(self.config.num_rh_augment)]
+            all_ids = [self.searcher[i].gen_candidates(qembs, k, self.config.disco.prune_candidates) for i in range(self.config.num_rh_augment)]
         else:
             raise ValueError(f"Unknown parallelization method: {self.config.parallelization}")
         return all_ids
@@ -1184,19 +1125,15 @@ if __name__=="__main__":
         assert conf.augment == False
         logging.info(f"Running ColBERT with baseline")
         obj = ColBERTBaseline(conf)
-    elif conf.method == "rerank":
-        assert conf.augment == False
-        logging.info(f"Running ColBERT with rerank")
-        obj = ColBERTBaselineWithRerank(conf)
-    elif conf.method == "augmented":
+    elif conf.method == "latepool":
         assert conf.augment == True
-        logging.info(f"Running ColBERT with augmentation")
+        logging.info(f"Running LatePool DISCo")
         # ColBERTAugmented(conf).run()
-        obj = ColBERTaugwiththreshold(conf)
-    elif conf.method == "internal":
+        obj = LatePoolDISCo_thresholded(conf)
+    elif conf.method == "disco":
         assert conf.augment == True
-        logging.info(f"Running ColBERT with internal rerank")
-        obj = ColBERT_internal(conf)
+        logging.info(f"Running DISCo")
+        obj = DISCo(conf)
     if conf.index:
         import time
         start = time.time()

@@ -15,7 +15,7 @@ Start by PLAID indexing, and then do everything else.
 Index location: `./experiments/<dataset_name>/BERT/colbertv2-plaid/norm/indexes/nbits=2.noaug`
 
 ```
-python3 -m src.colbert_embs \
+python3 -m src.retrievalmethods \
     data.dataset_name=msmarco \
     overwrite_index=True \
     index=True \
@@ -24,7 +24,7 @@ python3 -m src.colbert_embs \
     query_type=forum \ # does not matter for beir
     method="baseline"
 
-python3 -m src.colbert_embs \
+python3 -m src.retrievalmethods \
     data.dataset_name=pooled \
     overwrite_index=True \
     index=True \
@@ -51,9 +51,9 @@ python3 -m src.cmuvera data.dataset_name="pooled" data.loader_type=lotte data.qu
 Indexing commands -:
 
 ```
-python3 -m src.colbert_embs data.dataset_name="msmarco" data.loader_type=beir data.query_type=forum overwrite_index=True index=True augment=False dbl_norm=True method="muvera_iid" muvera.num_repetitions=20 muvera.num_simhash_projections=5 muvera.projection_dimension=20 muvera.final_projection_dimension=2560 lin_dim=128 muvera.half_embs=False muvera.type="BERT" muvera.compress=False embedder.mode="disk"
+python3 -m src.retrievalmethods data.dataset_name="msmarco" data.loader_type=beir data.query_type=forum overwrite_index=True index=True augment=False dbl_norm=True method="muvera_iid" muvera.num_repetitions=20 muvera.num_simhash_projections=5 muvera.projection_dimension=20 muvera.final_projection_dimension=2560 lin_dim=128 muvera.half_embs=False muvera.type="BERT" muvera.compress=False embedder.mode="disk"
 
-python3 -m src.colbert_embs data.dataset_name="pooled" data.loader_type=lotte data.query_type=forum overwrite_index=True index=True augment=False dbl_norm=True method="muvera_iid" muvera.num_repetitions=20 muvera.num_simhash_projections=5 muvera.projection_dimension=20 muvera.final_projection_dimension=2560 lin_dim=128 muvera.half_embs=False muvera.type="BERT" muvera.compress=False embedder.mode="disk"
+python3 -m src.retrievalmethods data.dataset_name="pooled" data.loader_type=lotte data.query_type=forum overwrite_index=True index=True augment=False dbl_norm=True method="muvera_iid" muvera.num_repetitions=20 muvera.num_simhash_projections=5 muvera.projection_dimension=20 muvera.final_projection_dimension=2560 lin_dim=128 muvera.half_embs=False muvera.type="BERT" muvera.compress=False embedder.mode="disk"
 ```
 
 ### WARP
@@ -90,7 +90,7 @@ for ((i = 0; i < NUM_RH_AUGMENT; i++)); do
     # Do not separate line by line using slash even though it looks aesthetic.
     # rh_num does not get set if that is done.
     CUDA_VISIBLE_DEVICES=$GPU_ID \
-    python3 -m src.colbert_embs data.loader_type=$LOADER data.query_type=$QUERY data.dataset_name=$DATASET_NAME embedder.mode="disk" overwrite_index=True index=True augment=True dbl_norm=True method="augmented" generate_new_rh=True rh_num=$i &
+    python3 -m src.retrievalmethods data.loader_type=$LOADER data.query_type=$QUERY data.dataset_name=$DATASET_NAME embedder.mode="disk" overwrite_index=True index=True augment=True dbl_norm=True method="augmented" generate_new_rh=True rh_num=$i &
 ```
 
 The above script can easily be modified for LoTTE datasets.
@@ -105,12 +105,12 @@ After PLAID indexing has been run and the BERT embeddings are available, we need
 
 One may set `overwrite_index` and `index` to False in each of the above indexing commands, and add `k=10`, to perform search over the index for a subset of size 10.
 
-Specifically in the case of DISCo, one also needs to set `method` to `internal`. For the late pooling ablation, one may use `method=augmented`. Here is an example for DISCo and the late pooling ablation on the Pooled dataset.
+Specifically in the case of DISCo, one also needs to set `method` to `disco`. For the late pooling ablation, one may use `method=latepool`. Here is an example for DISCo and the late pooling ablation on the Pooled dataset.
 
 ```
-python3 -m src.colbert_embs k=10 method='internal' num_rh_augment=8 data.dataset_name=pooled augment=True index=False dbl_norm=True embedder.mode='disk' colbert_topk=1 data.loader_type=lotte data.query_type=forum colbert_internal.rerank_internal=True colbert_internal.rerank_external=True
+python3 -m src.retrievalmethods k=10 method='disco' num_rh_augment=8 data.dataset_name=pooled augment=True index=False dbl_norm=True embedder.mode='disk' colbert_topk=1 data.loader_type=lotte data.query_type=forum disco.rerank_internal=True disco.rerank_external=True
 
-python3 -m src.colbert_embs k=10 method='augmented' num_rh_augment=8 data.dataset_name=pooled augment=True index=False dbl_norm=True embedder.mode='disk' colbert_topk=1 data.loader_type=lotte data.query_type=forum
+python3 -m src.retrievalmethods k=10 method='latepool' num_rh_augment=8 data.dataset_name=pooled augment=True index=False dbl_norm=True embedder.mode='disk' colbert_topk=1 data.loader_type=lotte data.query_type=forum
 ```
 
 ## Running exact greedy and submodlib solver commands
@@ -130,24 +130,24 @@ common_base=(
   "data.query_type=$QTYPE"
 )
 
-endtoend_common=(
+greedymethods_common=(
   "k=10"
   "submodlib.mega_q_batch_size=100"
   "submodlib.stop_if_zero_gain=False"
 )
 
 # Submodlib methods
-python3 -m src.endtoend "method=sml" "${common_base[@]}" "${endtoend_common[@]}" "submodlib.optimizer=lazy"
+python3 -m src.greedymethods "method=sml" "${common_base[@]}" "${greedymethods_common[@]}" "submodlib.optimizer=lazy"
 
-python -m src.endtoend "method=sml" "${common_base[@]}" "${endtoend_common[@]}" "submodlib.optimizer=stoc" "submodlib.epsilon=0.5" path_suffix=submodlib_no_stop_eps0.5
+python -m src.greedymethods "method=sml" "${common_base[@]}" "${greedymethods_common[@]}" "submodlib.optimizer=stoc" "submodlib.epsilon=0.5" path_suffix=submodlib_no_stop_eps0.5
 
 
-python3 -m src.endtoend "method=sml" "${common_base[@]}" "${endtoend_common[@]}" "submodlib.optimizer=ltl"  "submodlib.epsilon=0.1"
+python3 -m src.greedymethods "method=sml" "${common_base[@]}" "${greedymethods_common[@]}" "submodlib.optimizer=ltl"  "submodlib.epsilon=0.1"
 
-python3 -m src.endtoend "method=sml" "${common_base[@]}" "${endtoend_common[@]}" "submodlib.optimizer=ltl"  "submodlib.epsilon=0.5" path_suffix=submodlib_no_stop_eps0.5
+python3 -m src.greedymethods "method=sml" "${common_base[@]}" "${greedymethods_common[@]}" "submodlib.optimizer=ltl"  "submodlib.epsilon=0.5" path_suffix=submodlib_no_stop_eps0.5
 
-python3 -m src.endtoend "method=sml" "${common_base[@]}" "${endtoend_common[@]}" "submodlib.optimizer=ltl"  "submodlib.epsilon=0.9" path_suffix=submodlib_no_stop_eps0.9
+python3 -m src.greedymethods "method=sml" "${common_base[@]}" "${greedymethods_common[@]}" "submodlib.optimizer=ltl"  "submodlib.epsilon=0.9" path_suffix=submodlib_no_stop_eps0.9
 
 # Exact greedy
-python3 -m src.endtoend "method=v0" "${common_base[@]}" "baseline.distributed_search=False" "baseline.bucket_size=$BUCKET" k=10
+python3 -m src.greedymethods "method=v0" "${common_base[@]}" "baseline.distributed_search=False" "baseline.bucket_size=$BUCKET" k=10
 ```

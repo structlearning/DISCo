@@ -4,6 +4,7 @@ README associated with the paper.
 
 ### Folder Structure
 
+```
 .
 ├── ColBERT
 │   ├── LICENSE
@@ -42,8 +43,8 @@ README associated with the paper.
 │       └── utils
 ├── README.md
 ├── configs
-│   ├── colbert.yaml
-│   └── config.yaml
+│   ├── retrieval.yaml
+│   └── greedy.yaml
 ├── disco_requirements_py3_10.txt
 ├── disco_requirements_torch.txt
 ├── plot_utils.py
@@ -53,16 +54,17 @@ README associated with the paper.
     ├── __init__.py
     ├── calculate_docid_to_batch_info.py
     ├── cmuvera.py
-    ├── colbert_embs.py
+    ├── retrievalmethods.py
     ├── dataloader.py
     ├── embedder.py
-    ├── endtoend.py
+    ├── greedymethods.py
     ├── eval.py
     ├── state_saver.py
     ├── utils.py
     └── xtr.py
+```
 
-- **`ColBERT/`**: Contains code for the DISCo retrieval engine. It needs to be installed as an editable package. See scripts/install.sh.
+- **`ColBERT/`**: Contains code for the DISCo retrieval engine build on top of PLAID. It needs to be installed as an editable package. See scripts/install.sh.
 
 - **`data/`**: Stores the downloaded datasets, including the TSV files, for the BEIR benchmark. Make sure to create this folder at the start. For the LoTTE benchmark, you must specify IR_DATASETS_HOME in your .bashrc or your environment, so that the ir_datasets package can download the dataset files to the right location.
 
@@ -72,16 +74,16 @@ README associated with the paper.
     - `results/`: Stores solution sets and scores for different methods. Make sure to create this directory beforehand.
 
 - **`src/`**: Contains the main scripts:
-    - `colbert_embs.py`
-    - `endtoend.py`
+    - `retrievalmethods.py`
+    - `greedymethods.py`
     and others.
     
     These scripts use separate configuration files. To run them, use:
     ```bash
     python3 -m src.filename overwrite.config.variables=values
     ```
-    - `colbert.yml` is the associated config file for `colbert_embs.py`. `config.yml` is the associated config for `endtoend.py`
-    - For `colbert_embs.py`, run the `index` function for the classes in the script. Augmentation is handled within DISCo.
+    - `retrieval.yml` is the associated config file for `retrievalmethods.py`. `greedy.yml` is the associated config for `greedymethods.py`
+    - For `retrievalmethods.py`, run the `index` function for the classes in the script. Augmentation is handled within DISCo.
     - See the COMMANDS.md file for examples on every type of command, for one dataset from each benchmark.
 
 ### Other setup

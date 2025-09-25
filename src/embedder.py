@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 ### IMPORTANT: we are not using colbert_base here. as the encoding/coring model is the same.
 
+## A helper class to help with retrieving corpus embeddings from disk
 class RetrievalCorpus:
     def __init__(self, unique_emb, unique_mask, idx_matrix):
         """

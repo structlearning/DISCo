@@ -7,8 +7,8 @@ logger = logging.getLogger(__name__)
 
 from .dataloader import get_dataloader
 from .embedder import ColBERTEmbedder
-from .endtoend import BaseE2E
-from .colbert_embs import DummyQueryForColbert
+from .greedymethods import BaseE2E
+from .retrievalmethods import DummyQueryForColbert
 from .utils import partial_chamfer_sim, save
 
 import sys

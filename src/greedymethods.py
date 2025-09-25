@@ -29,10 +29,12 @@ logger = logging.getLogger(__name__)
 def get_method(config):
     name = config.method
     if name == "v0":
+        ## Greedy implementation in python/pytorch
         return GreedyBaseline_v0(config)
     elif name=="sml":
         return GreedyBaseline_submodlib(config)
     elif name == "augmented":
+        ## Greedy search over augmented embeddings, i.e. ApproxGreedy
         return GreedyBaseline_augmented(config)
     else:
         raise ValueError(f"Unknown method: {name}")
