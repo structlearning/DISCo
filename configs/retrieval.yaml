@@ -1,10 +1,11 @@
 k: 5
 colbert_topk: 100
-method: "internal" # baseline, rerank, augmented, internal
+method: "disco" # see retrievalmethods.py __main__ section for method names
 
 data:
   dataset_name: "nfcorpus"  #scifact, hotpotqa
   loader_type: "beir"
+  query_type: "forum"
 
 augment: False 
 dbl_norm: True  # [:,:,-1]=0 -> normalization -> [:,:,-1] = -1 

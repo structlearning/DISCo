@@ -1,5 +1,5 @@
 
-method: topk # exact, v0, muvera, topk, 
+method: "v0" # v0, sml or augmented
 k: 15 # budget
 num_rh: 8 # number of random hyperplanes to augement the embeddings with
 seed: 0

@@ -537,7 +537,7 @@ class MuveraAugmented(MVBaseE2E, AugmentationMixin):
             logger.info(f"Index for RH {key} written to {index_path}")
 
     def run(self):
-        # XXX: Copied from ColBERTAugmented. Refactor later.
+        # XXX: Copied. Refactor later.
         result_file_path = f"./pickles/results/{self.config.embedder.type}/muvera_aug_{self.config.data.dataset_name}_k{self.config.k}.pkl"
         
         self.embedder.embed_full_dataset(self.dataloader,mode=self.config.embedder.mode)
@@ -1128,7 +1128,6 @@ if __name__=="__main__":
     elif conf.method == "latepool":
         assert conf.augment == True
         logging.info(f"Running LatePool DISCo")
-        # ColBERTAugmented(conf).run()
         obj = LatePoolDISCo_thresholded(conf)
     elif conf.method == "disco":
         assert conf.augment == True
