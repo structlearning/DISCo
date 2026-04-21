@@ -1,6 +1,6 @@
 # A Dense Subset Index for Collective Query Coverage
 
-README associated with the paper.
+README associated with the paper: [A Dense Subset Index for Collective Query Coverage](https://openreview.net/pdf?id=cUdODCFjUM) @ ICLR 2026.
 
 ### Folder Structure
 
@@ -100,4 +100,4 @@ SUBMODLIB is the path to the local copy of the submodlib repository. Make sure t
 
 We provide modified copies of submodlib and WARP alongwith this code (at their respective Github locations). To guarantee that everything works correctly and seamlessly, these copies must be used. submodlib will be installed as an editable package as part of the install script (after the SUBMODLIB env var for the location is specified), but xtr_warp must be put on the pythonpath.
 
-We use the uv package manager for quick installation of requirements.
+We use the uv package manager for quick installation of requirements. See `scripts/install.sh` for more information on installation.
