@@ -88,8 +88,12 @@ README associated with the paper.
 
 ### Other setup
 
-Main environment variables: IR_DATASETS_HOME, XTR_WARP_PATH (put this on PYTHONPATH), VIRTUALENVS, SUBMODLIB.
+Main environment variables to be set: IR_DATASETS_HOME, XTR_WARP_PATH (put this on PYTHONPATH), VIRTUALENVS, SUBMODLIB.
+IR_DATASETS_HOME refers to whichever directory the ir_datasets package will download material (the LoTTE datasets) in.
+XTR_WARP_PATH is the path to the local copy of the xtr_warp Github repository. Make sure to [clone from here](https://github.com/PritishC/xtr-warp).
+VIRTUALENVS is the path to the directory containing your virtual environments.
+SUBMODLIB is the path to the local copy of the submodlib repository. Make sure to [clone from here](https://github.com/PritishC/submodlib).
 
-We provide modified copies of submodlib and WARP alongwith this code. To guarantee that everything works correctly and seamlessly, these copies must be used. submodlib will be installed as an editable package as part of the install script (after the SUBMODLIB env var for the location is specified), but WARP must be put on the pythonpath.
+We provide modified copies of submodlib and WARP alongwith this code (at their respective Github locations). To guarantee that everything works correctly and seamlessly, these copies must be used. submodlib will be installed as an editable package as part of the install script (after the SUBMODLIB env var for the location is specified), but xtr_warp must be put on the pythonpath.
 
-We use the uv package manager for quick installation.
+We use the uv package manager for quick installation of requirements.
