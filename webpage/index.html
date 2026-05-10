@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <title>DISCo: A Dense Subset Index for Collective Query Coverage</title>
+
+  <!-- Fonts: Fraunces (display serif) + Inter (body sans) + JetBrains Mono (code) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <!-- MathJax -->
+  <script type="text/x-mathjax-config">
+    MathJax.Hub.Config({
+      tex2jax: { inlineMath: [['$','$'], ['\\(','\\)']], displayMath: [['$$','$$'], ['\\[','\\]']] },
+      TeX: { extensions: ["AMSmath.js","AMSsymbols.js","color.js"] },
+      "HTML-CSS": { availableFonts: ["TeX"], scale: 100 },
+      showProcessingMessages: false, messageStyle: "none"
+    });
+  </script>
+  <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+
+  <style>
+    :root {
+      --bg: #fdfeff;              /* barely-there blue, near-white */
+      --surface: #ffffff;          /* white cards for contrast */
+      --ink: #14202e;              /* deep navy */
+      --ink-soft: #2c3a4e;
+      --muted: #6b7889;
+      --rule: #d4dde7;
+      --rule-soft: #e0e8f0;
+      --accent: #1f4b80;           /* deep ink blue */
+      --accent-soft: #5d83b3;
+      --accent-bg: #e3edf7;
+      --accent-2: #2596d6;         /* bright steel blue for secondary highlights */
+      --accent-2-bg: #e0eef9;
+      --tag-bg: #e0e8f0;
+      --tag-ink: #4a5566;
+      --code-bg: #e6edf5;
+      --code-ink: #1f2a38;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.72;
+      font-feature-settings: "ss01", "cv11";
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    body {
+      font-size: 21px;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background-image:
+        radial-gradient(circle at 15% 0%, rgba(31, 75, 128, 0.05) 0%, transparent 45%),
+        radial-gradient(circle at 85% 100%, rgba(37, 150, 214, 0.04) 0%, transparent 45%);
+    }
+
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(253, 254, 255, 0.85);
+      backdrop-filter: saturate(180%) blur(12px);
+      -webkit-backdrop-filter: saturate(180%) blur(12px);
+      border-bottom: 1px solid var(--rule);
+      padding: 16px 0;
+    }
+    .navbar-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 14.5px;
+    }
+    .nav-brand {
+      font-family: 'Fraunces', serif;
+      font-weight: 600;
+      font-size: 19px;
+      color: var(--ink);
+      text-decoration: none;
+      letter-spacing: -0.01em;
+    }
+    .nav-brand .dot { color: var(--accent); }
+    .nav-links { display: flex; gap: 28px; }
+    .nav-links a {
+      color: var(--ink-soft);
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s ease;
+      position: relative;
+    }
+    .nav-links a:hover { color: var(--accent); }
+    .nav-links .current { color: var(--accent); font-weight: 600; }
+    .nav-links .current::after {
+      content: "";
+      position: absolute;
+      left: 0; right: 0; bottom: -22px;
+      height: 2px;
+      background: var(--accent);
+    }
+
+    article {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 64px 18px 88px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero {
+      margin-bottom: 56px;
+      animation: fadeUp 0.6s ease-out;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    /* === ICLR venue badge === */
+    .venue-badge {
+      display: inline-flex;
+      align-items: stretch;
+      font-family: 'Inter', sans-serif;
+      margin-bottom: 26px;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1.5px solid var(--accent);
+      box-shadow:
+        0 1px 0 rgba(255,255,255,0.6) inset,
+        0 6px 20px -8px rgba(31, 75, 128, 0.35),
+        0 2px 6px -2px rgba(31, 75, 128, 0.18);
+      animation: badgeIn 0.7s cubic-bezier(0.2, 0.8, 0.25, 1) both;
+      position: relative;
+    }
+    @keyframes badgeIn {
+      0%   { opacity: 0; transform: translateY(-6px) scale(0.97); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .venue-badge .venue-side {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 18px;
+      background: linear-gradient(180deg, #f7faff 0%, #e3edf7 100%);
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .venue-badge .venue-side .conf {
+      font-family: 'Fraunces', serif;
+      font-weight: 600;
+      font-size: 16px;
+      letter-spacing: 0.01em;
+      text-transform: none;
+      color: var(--ink);
+    }
+    .venue-badge .venue-side .yr {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--muted);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    @media (max-width: 540px) {
+      .venue-badge { flex-wrap: wrap; }
+      .venue-badge .venue-side { font-size: 12.5px; padding: 7px 14px; }
+      .venue-badge .venue-side .conf { font-size: 15px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .venue-badge { animation: none; }
+    }
+
+    h1.post-title {
+      font-family: 'Fraunces', serif;
+      font-weight: 500;
+      font-size: clamp(2rem, 4vw, 2.85rem);
+      line-height: 1.15;
+      margin: 0 0 20px;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+    }
+    h1.post-title em {
+      font-style: italic;
+      font-weight: 500;
+      color: var(--accent);
+    }
+
+    .post-meta {
+      font-size: 14px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .post-meta .dot { color: var(--rule); }
+
+    .post-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 32px;
+    }
+    .post-tags a {
+      display: inline-block;
+      background: var(--tag-bg);
+      color: var(--tag-ink);
+      padding: 4px 12px;
+      border-radius: 4px;
+      text-decoration: none;
+      font-size: 12.5px;
+      font-weight: 500;
+      transition: all 0.2s ease;
+    }
+    .post-tags a:hover { background: var(--accent); color: white; }
+
+    .post-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 18px 0;
+      border-top: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule);
+    }
+    .post-actions a {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 16px;
+      background: white;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--ink-soft);
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    .post-actions a:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(31, 75, 128, 0.10);
+    }
+    .post-actions svg { width: 14px; height: 14px; }
+    .post-actions .primary {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+    .post-actions .primary:hover {
+      background: #122d52;
+      border-color: #122d52;
+      color: white;
+    }
+
+    .authors {
+      margin-top: 28px;
+      font-size: 17px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+    .authors strong { color: var(--ink-soft); font-weight: 500; }
+    .authors .affil { color: var(--muted); font-size: 15px; }
+
+    h2 {
+      font-family: 'Fraunces', serif;
+      font-weight: 500;
+      font-size: 1.7rem;
+      line-height: 1.3;
+      letter-spacing: -0.015em;
+      margin: 64px 0 18px;
+      color: var(--ink);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    h2::before {
+      content: "";
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+    h3 {
+      font-family: 'Fraunces', serif;
+      font-weight: 600;
+      font-size: 1.45rem;
+      margin: 36px 0 12px;
+      color: var(--ink);
+      letter-spacing: -0.005em;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    h3::before {
+      content: "";
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      background: var(--accent);
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    h3:has(.num)::before { display: none; }
+    h3 .num {
+      display: inline-block;
+      width: 36px; height: 36px;
+      line-height: 36px;
+      text-align: center;
+      background: var(--accent);
+      color: white;
+      border-radius: 50%;
+      font-family: 'Inter', sans-serif;
+      font-size: 17px;
+      font-weight: 600;
+      margin-right: 14px;
+      vertical-align: 1px;
+    }
+
+    p { margin: 0 0 18px; color: var(--ink-soft); text-align: justify; hyphens: auto; -webkit-hyphens: auto; }
+    p strong { color: var(--ink); font-weight: 600; }
+    a { color: var(--accent); text-decoration-color: rgba(31, 75, 128, 0.3); text-underline-offset: 3px; transition: text-decoration-color 0.2s; }
+    a:hover { text-decoration-color: var(--accent); }
+
+    .lead {
+      font-family: 'Fraunces', serif;
+      font-weight: 400;
+      font-size: 1.18rem;
+      line-height: 1.6;
+      color: var(--ink);
+      letter-spacing: -0.005em;
+      padding: 24px 28px;
+      background: linear-gradient(135deg, var(--accent-bg) 0%, var(--bg) 100%);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      margin: 8px 0 32px;
+      text-align: justify;
+      hyphens: auto;
+      -webkit-hyphens: auto;
+    }
+    .lead strong { color: var(--accent); font-weight: 600; }
+
+    .theorem {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-left: 3px solid var(--accent);
+      padding: 20px 24px;
+      margin: 24px 0;
+      border-radius: 0 8px 8px 0;
+    }
+    .theorem-label {
+      font-family: 'Inter', sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    .theorem p:last-child { margin-bottom: 0; }
+
+    .MathJax_Display { overflow-x: auto; overflow-y: hidden; padding: 8px 0; margin: 16px 0; }
+
+    figure {
+      margin: 40px -8px;
+      padding: 28px;
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+    figure img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 0 auto;
+      border-radius: 4px;
+    }
+    figure figcaption {
+      font-size: 13.5px;
+      color: var(--muted);
+      margin-top: 16px;
+      line-height: 1.6;
+      padding: 0 8px;
+      text-align: left;
+    }
+    figure figcaption strong {
+      color: var(--ink-soft);
+      font-weight: 600;
+      display: inline-block;
+      margin-right: 4px;
+    }
+
+    .block-diagram {
+      width: 100%;
+      max-width: 720px;
+      margin: 0 auto;
+      display: block;
+    }
+
+    ul, ol { padding-left: 24px; margin: 0 0 18px; color: var(--ink-soft); }
+    li { margin-bottom: 8px; text-align: justify; hyphens: auto; -webkit-hyphens: auto; }
+    li::marker { color: var(--accent); }
+
+    .feature-list { list-style: none; padding-left: 0; }
+    .feature-list li {
+      position: relative;
+      padding-left: 32px;
+      margin-bottom: 14px;
+    }
+    .feature-list li::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0.55em;
+      width: 18px; height: 2px;
+      background: var(--accent);
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--rule);
+      border-radius: 10px;
+      padding: 18px 22px;
+      overflow-x: auto;
+      font-family: 'JetBrains Mono', "SF Mono", Menlo, Consolas, monospace;
+      font-size: 13.5px;
+      line-height: 1.65;
+      color: var(--code-ink);
+      margin: 20px 0;
+    }
+    code { font-family: 'JetBrains Mono', "SF Mono", Menlo, monospace; font-size: 0.9em; }
+    p code, li code {
+      background: var(--code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--code-ink);
+      font-size: 0.88em;
+    }
+    .code-comment { color: #6b7889; font-style: italic; }
+    .code-keyword { color: #1f4b80; font-weight: 500; }
+
+    .ornament {
+      text-align: center;
+      margin: 48px 0;
+      color: var(--rule);
+      font-size: 18px;
+      letter-spacing: 0.5em;
+    }
+
+    .results-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin: 24px 0;
+    }
+    .result-card {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 10px;
+      padding: 18px 20px;
+      transition: all 0.2s ease;
+    }
+    .result-card:hover {
+      border-color: var(--accent-soft);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(31, 75, 128, 0.08);
+    }
+    .result-card .label {
+      font-size: 11.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .result-card .value {
+      font-family: 'Fraunces', serif;
+      font-size: 1.05rem;
+      color: var(--ink);
+      line-height: 1.4;
+    }
+
+    .contact-card {
+      margin-top: 56px;
+      padding: 28px 32px;
+      background: linear-gradient(135deg, var(--accent-bg) 0%, var(--bg) 100%);
+      border: 1px solid var(--rule);
+      border-radius: 12px;
+    }
+    .contact-card h2 { margin-top: 0; padding-left: 0; }
+    .contact-card h2::before { display: none; }
+    .contact-card .authors-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .contact-card .authors-list a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      background: white;
+      border: 1px solid var(--rule);
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 14px;
+      color: var(--ink-soft);
+      transition: all 0.2s ease;
+    }
+    .contact-card .authors-list a:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    footer {
+      max-width: 1180px;
+      margin: 64px auto 32px;
+      padding: 32px 22px;
+      border-top: 1px solid var(--rule);
+      font-size: 13px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    /* Definition callout — like .theorem but in a softer slate tone */
+    .definition {
+      background: #eef4fa;
+      border: 1px solid var(--rule);
+      border-left: 3px solid #5d83b3;
+      padding: 20px 24px;
+      margin: 24px 0;
+      border-radius: 0 8px 8px 0;
+    }
+    .definition-label {
+      font-family: 'Inter', sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #5d83b3;
+      margin-bottom: 8px;
+    }
+    .definition p:last-child { margin-bottom: 0; }
+
+    /* Vertical proof-step flow */
+    .proof-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin: 24px 0 28px;
+      counter-reset: stepnum;
+    }
+    .proof-step {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 18px;
+      align-items: start;
+      padding: 18px 20px;
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 10px;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+    .proof-step:hover {
+      border-color: var(--accent-soft);
+      transform: translateX(2px);
+      box-shadow: 0 4px 12px rgba(31, 75, 128, 0.07);
+    }
+    .proof-step .step-num {
+      counter-increment: stepnum;
+      width: 36px; height: 36px;
+      line-height: 36px;
+      text-align: center;
+      background: var(--accent);
+      color: white;
+      border-radius: 50%;
+      font-family: 'Fraunces', serif;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .proof-step .step-body { font-size: 15.5px; line-height: 1.6; color: var(--ink-soft); }
+    .proof-step .step-body strong { color: var(--ink); display: block; margin-bottom: 4px; font-family: 'Fraunces', serif; font-size: 1.05rem; font-weight: 600; }
+    .proof-step .step-body code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; font-size: 0.82em; }
+    .proof-step .lemma-tag {
+      display: inline-block;
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-bg);
+      padding: 2px 8px;
+      border-radius: 3px;
+      margin-left: 8px;
+      vertical-align: 2px;
+    }
+    /* Connecting line between steps */
+    .proof-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      left: 38px; bottom: -14px;
+      width: 2px; height: 14px;
+      background: var(--rule);
+    }
+
+    /* Two-column intuition / formal pair */
+    .pair-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin: 24px 0;
+    }
+    .pair-card {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 10px;
+      padding: 20px 22px;
+    }
+    .pair-card .pair-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+    .pair-card.intuition { background: linear-gradient(135deg, #e3edf7 0%, var(--bg) 100%); }
+    .pair-card.formal { background: var(--surface); }
+    .pair-card p:last-child { margin-bottom: 0; }
+    .pair-card p { font-size: 15px; }
+
+    /* Inline emphasis boxes — Scope, Why it matters */
+    .scope-note {
+      margin: 24px 0;
+      padding: 18px 22px;
+      background: var(--bg);
+      border: 1px dashed var(--rule);
+      border-radius: 8px;
+      font-size: 15.5px;
+    }
+    .scope-note .scope-icon {
+      display: inline-block;
+      font-family: 'Fraunces', serif;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin-right: 8px;
+    }
+
+    /* Permutation visual */
+    .permvis {
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto;
+      display: block;
+    }
+
+    /* TL;DR bullet — short, scannable points */
+    .tldr {
+      list-style: none;
+      padding: 0;
+      margin: 20px 0;
+    }
+    .tldr li {
+      position: relative;
+      padding: 10px 16px 10px 36px;
+      margin-bottom: 8px;
+      background: var(--surface);
+      border-left: 2px solid var(--accent);
+      border-radius: 0 6px 6px 0;
+      font-size: 15px;
+      color: var(--ink-soft);
+    }
+    .tldr li::before {
+      content: "→";
+      position: absolute;
+      left: 14px; top: 10px;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    @media (max-width: 720px) {
+      article { padding: 40px 14px 56px; }
+      figure { margin: 28px -4px; padding: 18px; }
+      h2 { font-size: 1.45rem; }
+      .navbar-inner { padding: 0 14px; }
+      .nav-links { gap: 18px; }
+      .proof-step { grid-template-columns: 36px 1fr; gap: 12px; padding: 14px 16px; }
+      .proof-step .step-num { width: 30px; height: 30px; line-height: 30px; font-size: 14px; }
+    }
+  </style>
+</head>
+<body>
+
+<article>
+
+  <div class="hero">
+    <div class="venue-badge" role="img" aria-label="Accepted to ICLR 2026">
+      <span class="venue-side">
+        <span class="conf">ICLR 2026</span>
+      </span>
+    </div>
+    <h1 class="post-title">A Dense Subset Index <br>
+      <span style="color: var(--accent);">for Collective Query Coverage</span></h1>
+
+    <div class="post-actions">
+      <a class="primary" href="https://github.com/structlearning/DISCo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Paper
+      </a>
+      <a href="https://github.com/structlearning/DISCo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        Code
+      </a>
+      <a href="#contact">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        Contact
+      </a>
+    </div>
+
+    <p class="authors">
+      <strong>Kartik Nair</strong> <span class="affil">(CMU)</span>,
+      <strong>Pritish Chakraborty</strong> <span class="affil">(IIT Bombay)</span>,
+      <strong>Atharva Tambat</strong> <span class="affil">(IIT Bombay)</span>,<br>
+      <strong>Indradyumna Roy</strong> <span class="affil">(IIT Bombay)</span>,
+      <strong>Soumen Chakrabarti</strong> <span class="affil">(IIT Bombay)</span>,
+      <strong>Anirban Dasgupta</strong> <span class="affil">(IIT Gandhinagar)</span>,
+      <strong>Abir De</strong> <span class="affil">(IIT Bombay)</span>
+    </p>
+  </div>
+
+  <p class="lead">
+    Many modern retrieval tasks — multi-hop QA, table QA, schema retrieval for text-to-SQL — are <em>collective</em>:
+    no single passage answers the query, but a small subset together does. We recast first-stage dense retrieval
+    around a <strong>submodular query-coverage objective</strong>, and show that its greedy maximization can be
+    folded into a vector index. <strong>DISCo</strong> is the resulting indexed retriever — a multi-vector dense
+    index in a lifted space, queried in <em>K</em> rounds, that delivers near-greedy coverage at over <strong>100×</strong>
+    the speed of an exact greedy baseline.
+  </p>
+
+  <h2>Motivation</h2>
+  <p>
+    Classical IR scores documents <em>independently</em> against a query and returns the top-$K$. The unspoken
+    assumption is that a relevant document is self-complete — that it answers the query on its own. For a growing
+    class of tasks, this is no longer true. Consider the multi-hop question, <em>"Which computer scientist from
+    Clamart was an editor of Algorithmica?"</em> The answer is assembled from three Wikipedia passages: one names
+    the editors of Algorithmica, one establishes that Bernard Chazelle was an editor, and one notes that Chazelle
+    was born in Clamart. No single passage carries both Clamart and Algorithmica.
+  </p>
+  <p>
+    The same shape recurs across multi-hop QA, knowledge-graph QA, table QA, and schema retrieval for text-to-SQL.
+    In each, evidence is spread across items, and competing them on a per-item relevance score is the wrong primitive.
+    Practitioners cope by inflating $K$ and praying for recall, but a top-$K$ packed with three biographies of
+    Chazelle covers fewer query atoms than a thoughtful set of three. <strong>What is needed is a relevance score
+    on item subsets, and a first-stage retriever that optimizes it.</strong>
+  </p>
+
+  <h2>Problem Setup</h2>
+  <p>
+    Following recent late-interaction retrievers, we encode each query and each corpus item as a <em>bag</em> of
+    contextual token vectors. A query is $Q = \{q_1, \dots, q_M\} \subset \mathbb{R}^d$ and a corpus item is
+    $X_c = \{x_1, \dots, x_L\} \subset \mathbb{R}^d$. All vectors are unit-normalized. We seek a small subset
+    $S \subseteq \mathcal{C}$ of items whose token vectors collectively cover the query token vectors:
+  </p>
+  \[
+    F(S, Q) \;=\; \sum_{q \in Q}\, \max_{x \,\in\, \bigcup_{c\in S} X_c}\, q^{\top} x;
+    \qquad \max_{S \subseteq \mathcal{C}} F(S, Q) \;\;\text{s.t.}\;\; |S| \le K.
+  \]
+  <p>
+    Two features of $F$ are worth noting. First, it generalizes the per-document MaxSim score that powers the
+    ColBERT family — but with a single outer max over the union $\bigcup_{c \in S} X_c$ instead of an outer sum
+    over $c \in S$. Replacing the sum with a max removes the additive credit a top-$K$ retriever pays for
+    redundant coverage. Second, $F$ is monotone and submodular: adding more items only helps, but each new item
+    helps less than the last.
+  </p>
+  <p>
+    Submodularity hands us a near-optimal greedy algorithm — pick the item with the largest marginal gain at
+    each round, $K$ rounds total — with the standard $(1 - 1/e)$ guarantee. But the bottleneck is the same one
+    facing top-$K$ retrievers, only worse: at each of $K$ rounds, the greedy algorithm scores every item in the
+    corpus. On MS-Marco's 8.8M-passage corpus, even at one millisecond per marginal gain, $K=10$ rounds take
+    over 24 hours. <strong>The challenge is to do greedy, in <em>sublinear</em> time per round, by indexing the
+    corpus once.</strong>
+  </p>
+
+  <h2>From Marginal Gain to a Lifted Dot Product</h2>
+
+  <p>
+    Building an index for a complicated, query-and-state-dependent score function is harder than building one
+    for a simple dot product. The trick that powers DISCo is to <em>rewrite the marginal gain</em> until it
+    looks like a dot product over fixed corpus vectors and a query vector that only depends on the current
+    coverage.
+  </p>
+
+  <h3>Step 1 — A clean form for the marginal gain</h3>
+
+  <div class="theorem">
+    <div class="theorem-label">Proposition · Marginal gain decomposition</div>
+    <p>For any $c \notin S$,</p>
+    \[
+      F(c \mid S, Q) \;=\; \sum_{q \in Q} \max_{x \in X_c}
+      \Big[\, q^{\top} x \;-\; \max_{u \in S}\, \max_{x' \in X_u}\, q^{\top} x' \,\Big]_{+}
+    \]
+    <p>where $[\cdot]_+ = \max(\cdot, 0)$ is the hinge function.</p>
+  </div>
+
+  <p>
+    Read this aloud: for each query token $q$, count only the score that <em>exceeds</em> the best score the
+    current set $S$ already gives that token. If a new item $c$ would only re-cover what $S$ already covers,
+    the inner hinge zeros out and $c$ contributes nothing — exactly what we want from a coverage objective.
+    The structure is suggestive but not yet indexable: the inner term inside the hinge couples $x'$ to both
+    $S$ and $Q$, and the corpus side cannot be precomputed.
+  </p>
+
+  <h3>Step 2 — Push state into the query, freeze the corpus</h3>
+
+  <p>
+    The second term inside the hinge, $\max_{u \in S} \max_{x' \in X_u} q^{\top} x'$, is just $F(S, q)$ — the
+    coverage value of $S$ on the singleton query $\{q\}$. If we promote each query token to a $(d{+}1)$-dimensional
+    <em>state-aware</em> vector and each corpus token to a $(d{+}1)$-dimensional <em>state-free</em> vector,
+  </p>
+
+  <div class="pair-grid">
+    <div class="pair-card intuition">
+      <div class="pair-label">Augmented query</div>
+      <p>
+        $\widehat{q}_S \;:=\; [\,q;\; F(S, q)\,] \in \mathbb{R}^{d+1}$.<br>
+        The trailing coordinate carries everything we need to remember about the items already chosen — for
+        this query token. As $S$ grows, only the query side updates.
+      </p>
+    </div>
+    <div class="pair-card formal">
+      <div class="pair-label">Augmented corpus</div>
+      <p>
+        $\widehat{x} \;:=\; [\,x;\; -1\,] \in \mathbb{R}^{d+1}$.<br>
+        Crucially, $\widehat{x}$ is independent of both $S$ and $Q$. Build it once at indexing time; never touch
+        it again at query time.
+      </p>
+    </div>
+  </div>
+
+  <p>
+    With these augmentations, the marginal gain becomes a sum of hinges of dot products in the lifted space:
+  </p>
+  \[
+    F(c \mid S, Q) \;=\; \sum_{q \in Q} \max_{x \in X_c}\, [\,\widehat{q}_S^{\top}\, \widehat{x}\,]_{+}.
+  \]
+  <p>
+    The dependency on $S$ has been transferred entirely to the query side. The corpus tokens sit still — exactly
+    the property a static index needs. The remaining obstacle: standard ANN indexes dot products, not <em>hinged</em>
+    dot products.
+  </p>
+
+  <h3>Step 3 — A random projection that mimics the hinge</h3>
+
+  <p>
+    The final move is to approximate the hinge of a dot product by an ordinary dot product in a higher-dimensional
+    space — at which point any off-the-shelf vector index will do. For a random hyperplane $w \sim \mathcal{N}(0, I_{d+1})$,
+    define the feature map
+  </p>
+  \[
+    \Phi_w(u) \;=\; \tfrac{1}{\sqrt{2}}\, [\,u;\; \mathrm{sign}(w^{\top} u)\cdot u\,] \;\in\; \mathbb{R}^{2(d+1)}.
+  \]
+
+  <div class="theorem">
+    <div class="theorem-label">Theorem · Hinge as random-projection dot product</div>
+    <p>For any $u, v \in \mathbb{R}^{d+1}$ and $w \sim \mathcal{N}(0, I_{d+1})$,</p>
+    \[
+      \Phi_w(u)^{\top}\, \Phi_w(v) \;=\; [\,u^{\top} v\,]_{+} \quad \text{with probability } p \ge \tfrac{1}{2}.
+    \]
+    <p>Drawing $R$ independent hyperplanes and taking the maximum over the $R$ replica scores boosts this to
+       $1 - 1/2^R$, and a union bound over $|Q|$ query tokens gives the full guarantee.</p>
+  </div>
+
+  <p>
+    The projection is asymmetric in a useful way: the score is either $u^{\top} v$ (when $\mathrm{sign}(w^{\top} u)$
+    agrees with $\mathrm{sign}(w^{\top} v)$) or $0$ (when they disagree) — and a Charikar-style argument fixes
+    the agreement probability at $\ge 1/2$ regardless of the sign of $u^{\top} v$. With $R = 8$ replicas, a
+    typical query of $|Q| < 32$ tokens is correctly approximated with probability $\ge 0.875$ — and in practice
+    the union bound is loose, so this is conservative.
+  </p>
+
+  <p>
+    Putting the three steps together, we replace the exact greedy marginal gain with its random-projection
+    approximation:
+  </p>
+  \[
+    G_{w_{1:R}}(c; S, Q) \;=\; \sum_{q \in Q}\, \max_{r \in [R]}\, \max_{x \in X_c}\, \Phi_{w_r}(\widehat{q}_S)^{\top}\, \Phi_{w_r}(\widehat{x}).
+  \]
+  <p>
+    The right-hand side is — structurally — a MaxSim score with an extra max over $R$ replicas. Anything that
+    can index MaxSim, can index this.
+  </p>
+
+  <div class="ornament">· · ·</div>
+
+  <h2>The DISCo Pipeline</h2>
+  <p>
+    DISCo turns the marginal-gain approximation $G_{w_{1:R}}$ into a working multi-vector retrieval engine.
+    The architecture builds on the IVF-with-residuals tradition of ColBERT-v2 and PLAID, with three deliberate
+    departures: lifted vector spaces, $R$ replica indices, and per-round <em>state mutation</em> of the query.
+  </p>
+
+  <figure>
+    <img src="pipeline.svg" alt="DISCo block diagram: indexing pipeline and K-round query execution">
+    <figcaption>
+      <strong>Figure 1: DISCo block diagram.</strong> $R$ random projection vectors $\{w_r : r \in [R]\}$ are
+      sampled at indexing time. Every corpus token $x_c$ is augmented to $\widehat{x}_c$, projected through each
+      $\Phi_{w_r}$, and clustered into $B$ centroids per replica with associated posting lists. At query time,
+      execution unfolds in $K$ rounds (ANNS1, ANNS2, …, ANNS$K$). Each round consults all $R$ replica indices
+      with the current state-aware query $\widehat{q}_S$ and selects the next item $c_k$ in $o(|\mathcal{C}|)$ time.
+    </figcaption>
+  </figure>
+
+  <h3><span class="num">1</span>Indexing — once, offline, query-agnostic</h3>
+  <p>
+    For each of the $R$ projection vectors $w_r$, we build a separate IVF sub-index over $\{\Phi_{w_r}(\widehat{x}_c) : c \in \mathcal{C}\}$.
+    Concretely: augment all corpus tokens to $(d{+}1)$ dimensions; project to $2(d{+}1)$ via $\Phi_{w_r}$;
+    cluster into $B$ centroids by k-means; for each token, keep its nearest centroid id $b^*$ and a quantized
+    residual $\Delta$; store the inverted lists (centroid → document ids) and the forward lists (document → atom $(b^*, \Delta)$ codes).
+    The result is $R$ sister indices, all built once.
+  </p>
+
+  <h3><span class="num">2</span>Query — $K$ rounds, mutating state, sublinear per round</h3>
+  <p>
+    Query processing proceeds for $K$ greedy rounds. Each round consults all $R$ replica indices, and progresses
+    through six pruning stages — the candidate pool shrinks while the score approximation gets sharper. The
+    stages are graded approximations of the true marginal gain, ending at the exact value:
+  </p>
+
+  <div class="proof-flow">
+    <div class="proof-step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <strong>Replica-level coarse filtering</strong>
+        For each replica $r$ and each query token $q$, find the closest centroid to $\Phi_{w_r}(\widehat{q}_S)$ and
+        union the document IDs in its inverted list across query tokens. This is the roughest pass — atom-level,
+        per-replica.
+      </div>
+    </div>
+    <div class="proof-step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <strong>Replica-level centroid pruning</strong>
+        Re-score each surviving document $c$ as $\sum_{q \in Q} \max_{o \in \mathrm{FwdInd}^{(r)}(c)} \Phi_{w_r}(\widehat{q}_S)^{\top} o$,
+        using only centroid embeddings (no residuals). Apply a threshold $\tau$ and keep the top $n$ per replica.
+      </div>
+    </div>
+    <div class="proof-step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <strong>Replica pooling</strong>
+        Pool surviving candidates across all $R$ replicas into a single set $\mathcal{C}_1$. This is the move
+        that <em>early</em>-pools: replica information is fused before the more expensive scoring stages.
+      </div>
+    </div>
+    <div class="proof-step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <strong>Fine-grained filtering</strong>
+        Now score with the full $\max_r$ over replicas: $\sum_q \max_r \max_o \Phi_{w_r}(\widehat{q}_S)^{\top} o$.
+        Still centroid-only, but now a much closer approximation to $G_{w_{1:R}}$. Retain $n/4$.
+      </div>
+    </div>
+    <div class="proof-step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <strong>Residual scoring</strong>
+        For each surviving candidate, reconstruct its tokens by adding back the quantized residuals: $\widehat{x}_\Delta = \Delta + o$.
+        Re-score with reconstructed tokens — closely mirrors $G_{w_{1:R}}$ at compressed precision. Retain top $n'$.
+      </div>
+    </div>
+    <div class="proof-step">
+      <div class="step-num">6</div>
+      <div class="step-body">
+        <strong>Full-precision scoring + selection</strong>
+        On the small final pool, evaluate the <em>exact</em> marginal gain $F(c \mid S, Q)$ using full-precision
+        token vectors $X_c$. Pick the winner $c_k$, add it to $S_k$, and update $\widehat{q}_{S_k}$ for the next round.
+      </div>
+    </div>
+  </div>
+
+  <p>
+    Two things happen between rounds. First, the augmented query vectors $\widehat{q}_S$ are recomputed to reflect
+    the new coverage state — so the same query token "asks for less" of the corpus from one round to the next.
+    Second, nothing on the corpus side changes. The same indices are reused $K$ times, but each time they are
+    probed with a different query embedding.
+  </p>
+
+  <div class="theorem">
+    <div class="theorem-label">Theorem · Approximation guarantee for DISCo</div>
+    <p>
+      Let $S_K$ be the set returned by DISCo's greedy procedure with $R \ge \log(|Q|/\delta)$ random projections,
+      and let $S^*$ be the optimum of $F(\cdot, Q)$ at budget $K$. Then
+    </p>
+    \[
+      \mathbb{E}_{w_{1:R}}\!\left[\, F(S_K, Q) \,\right] \;\ge\; \big(1 - 1/e - \delta\big)\cdot F(S^*, Q).
+    \]
+    <p>
+      The randomized projection costs only an additive $\delta$ on top of the classical $(1 - 1/e)$ greedy bound —
+      and $\delta$ is exponentially small in $R$.
+    </p>
+  </div>
+
+  <div class="ornament">· · ·</div>
+
+  <h2>Experimental Findings</h2>
+
+  <p>
+    DISCo is evaluated across seven retrieval benchmarks, against two families of baselines: classical submodular
+    solvers (Exact / Lazy / Stochastic / Lazier-than-lazy Greedy), and modern late-interaction IR engines (PLAID,
+    MUVERA, WARP). The two families are useful foils — the greedy solvers cap coverage but pay linear-in-corpus
+    time; the IR engines are fast but optimize the wrong objective (independent top-$K$). The setup is summarised
+    below; full details in the paper.
+  </p>
+
+  <div class="results-grid">
+    <div class="result-card">
+      <div class="label">Datasets</div>
+      <div class="value">MS-Marco, HotpotQA, Fever (BEIR); Pooled, Technology, Writing, Science (LoTTE)</div>
+    </div>
+    <div class="result-card">
+      <div class="label">Baselines</div>
+      <div class="value">Exact / Lazy / Stochastic / Lazier-than-lazy Greedy; PLAID, MUVERA, WARP</div>
+    </div>
+    <div class="result-card">
+      <div class="label">Encoder</div>
+      <div class="value">bert-base-uncased, 128-dim L2-normalized atom embeddings</div>
+    </div>
+    <div class="result-card">
+      <div class="label">DISCo config</div>
+      <div class="value">$R = 8$ replica indices, 2-bit residual quantization, $K = 10$</div>
+    </div>
+  </div>
+
+  <h3>Coverage vs. efficiency: the central tradeoff</h3>
+
+  <p>
+    The headline plot reports average coverage $\overline{F}_K$ on the y-axis and per-query speedup over Exact
+    Greedy on the x-axis (log-scale). The upper-right corner is the goal — high coverage <em>and</em> fast
+    queries. Greedy variants (cyan, orange) cluster in the upper-left: maximal coverage, painfully slow. IR
+    baselines (purple, pink, green) cluster in the middle-right: fast, but dominated on coverage. DISCo lives
+    in the upper-right.
+  </p>
+
+  <figure>
+    <img src="assets/fig2_coverage.png" alt="Coverage versus efficiency tradeoff for DISCo and baselines on four datasets">
+    <figcaption>
+      <strong>Figure 1 (paper Fig. 2).</strong> Trade-off between average coverage $\overline{F}_K$ and per-query
+      speedup over Exact Greedy across MS-Marco, HotpotQA, Fever, and Pooled. Efficiency is on log-scale; the
+      upper-right corner is best. <strong>DISCo</strong> matches the greedy solvers in coverage while being
+      <strong>over 100× faster on MS-Marco</strong>, and consistently outperforms PLAID, MUVERA, and WARP in
+      coverage at comparable latencies.
+    </figcaption>
+  </figure>
+
+  <h3>Does coverage actually reward the gold subsets?</h3>
+
+  <p>
+    On HotpotQA, every query has a gold pair of supporting passages — both are needed to answer. We can therefore
+    ask a sharper question: of the methods listed, which actually retrieves the full gold subset within a small
+    budget? We measure the rank at which the <em>last</em> gold passage shows up. A low number means full recall
+    of the gold pair within a tight $K$.
+  </p>
+
+  <figure>
+    <img src="assets/fig4_lastrank.png" alt="Histogram of last-relevant-rank on HotpotQA across methods">
+    <figcaption>
+      <strong>Figure 2 (paper Fig. 4).</strong> Histogram of the rank at which the last (2nd) gold passage
+      is retrieved on HotpotQA, across methods. DISCo matches the deterministic greedy variants — almost all
+      gold pairs are recovered within rounds 2–3. The IR baselines (MUVERA, PLAID, WARP) push the last gold
+      passage to higher ranks more often, because their independent top-$K$ scoring is blind to redundancy.
+    </figcaption>
+  </figure>
+
+  <h3>Approximation quality: how many random projections are enough?</h3>
+
+  <p>
+    The theory says $R \ge \log(|Q|/\delta)$ projections suffice to drive the approximation gap below $\delta$.
+    The empirical question is how loose the union bound is — i.e., how few projections we can get away with in
+    practice. We sweep $R$ from 1 to 5 and compare the resulting coverage trajectories to the Exact Greedy
+    skyline.
+  </p>
+
+  <figure>
+    <img src="assets/fig5_approx.png" alt="Coverage with approximate marginal gain at varying R">
+    <figcaption>
+      <strong>Figure 3 (paper Fig. 5).</strong> Coverage of the random-projection greedy at $R \in \{1, \dots, 5\}$,
+      against the Exact Greedy skyline on NFCorpus and Writing. The approximation tightens rapidly with $R$ —
+      by $R = 5$ the trajectory is visually indistinguishable from exact greedy. This is a much smaller $R$
+      than the theoretical bound suggests, and is the empirical justification for the $R = 8$ setting used
+      throughout DISCo.
+    </figcaption>
+  </figure>
+
+  <h3>Architectural ablation: why early pooling beats late pooling</h3>
+
+  <p>
+    A natural alternative to DISCo's design is <em>late pooling</em> — run all $R$ replica indices independently
+    end-to-end, each producing its own top-$n'$ candidates, then merge and rerank. It is simpler, more parallel,
+    and more obvious. It is also worse.
+  </p>
+
+  <figure>
+    <img src="assets/fig6_pooling.png" alt="Early vs late pooling ablation on MS-Marco and Pooled">
+    <figcaption>
+      <strong>Figure 4 (paper Fig. 6).</strong> DISCo's early pooling (black) vs. late-pooling variants at
+      $n' \in \{1, 10, 15, 20\}$, on MS-Marco and Pooled. Early pooling dominates: it both reaches a higher
+      coverage ceiling and runs faster. Pooling replicas <em>before</em> fine-grained filtering aligns the
+      candidate set with the true $\sum_q \max_r \max_o \Phi_{w_r}(\widehat{q}_S)^{\top} o$ objective, so
+      low-scoring candidates drop out earlier and final-stage scoring touches fewer items.
+    </figcaption>
+  </figure>
+
+  <h3>One number: error against gold and MAP</h3>
+
+  <p>
+    Beyond the coverage curves, two scalar metrics summarise alignment with HotpotQA gold sets — coverage
+    error against the gold pair $|F(S_{\text{gold}}, Q) - F(S_K, Q)|$ averaged over queries, and Mean Average
+    Precision treating the retrieved sequence as a ranked list.
+  </p>
+
+  <div class="results-grid">
+    <div class="result-card">
+      <div class="label">Coverage error ↓</div>
+      <div class="value">DISCo <strong style="color:var(--accent);">0.68</strong> &nbsp;·&nbsp; Exact Greedy 0.69 &nbsp;·&nbsp; PLAID 1.30 &nbsp;·&nbsp; MUVERA 3.55</div>
+    </div>
+    <div class="result-card">
+      <div class="label">MAP ↑</div>
+      <div class="value">DISCo <strong style="color:var(--accent);">0.84</strong> &nbsp;·&nbsp; Exact Greedy 0.83 &nbsp;·&nbsp; PLAID 0.81 &nbsp;·&nbsp; MUVERA 0.49</div>
+    </div>
+  </div>
+
+  <p>
+    Two takeaways: DISCo matches the exact greedy ceiling on both metrics, and the IR baselines lag — most
+    severely MUVERA, whose single-vector encoding cannot represent collaborative coverage at all.
+    Stochastic and Lazier-than-lazy Greedy fare worse still — their query-agnostic random pruning kills
+    coverage even at moderate budgets.
+  </p>
+
+  <div class="ornament">· · ·</div>
+
+  <h2>Takeaways</h2>
+
+  <ul class="tldr">
+    <li>Collective retrieval — the right primitive when no single item answers the query — has a clean
+        formulation as monotone submodular coverage maximization in vector-bag space.</li>
+    <li>The greedy algorithm's marginal gain has a hidden lifted-dot-product form: push state into the query
+        side, freeze the corpus side at $[\,x;\, -1\,]$, and the rest is just MaxSim with extra projections.</li>
+    <li>A simple sign-based random projection turns the hinge into an ordinary dot product, with high-probability
+        accuracy from a small $R$ — eight replica indices were enough across every benchmark we tried.</li>
+    <li>DISCo packages this into a multi-vector IVF retriever that runs greedy in $K$ sublinear rounds —
+        matching exact-greedy coverage at <strong>over 100× the speed</strong> on MS-Marco.</li>
+  </ul>
+
+  <div class="contact-card" id="contact">
+    <h2>Contact</h2>
+    <p>If you have questions or suggestions, please reach out to any of the authors.</p>
+    <div class="authors-list">
+      <a href="mailto:ksnair@cs.cmu.edu">✉ Kartik Nair</a>
+      <a href="mailto:pritish@cse.iitb.ac.in">✉ Pritish Chakraborty</a>
+      <a href="mailto:atharvatambat@cse.iitb.ac.in">✉ Atharva Tambat</a>
+      <a href="mailto:indraroy15@cse.iitb.ac.in">✉ Indradyumna Roy</a>
+      <a href="mailto:soumen@cse.iitb.ac.in">✉ Soumen Chakrabarti</a>
+      <a href="mailto:anirbandg@iitgn.ac.in">✉ Anirban Dasgupta</a>
+      <a href="mailto:abir@cse.iitb.ac.in">✉ Abir De</a>
+    </div>
+  </div>
+
+</article>
+
+<footer>
+  <p>©KN/PC/AT/IR/SC/ADG/AD. Built with help of Claude. <a href="https://github.com/structlearning/DISCo" style="color: var(--muted);">read the paper</a></p>
+</footer>
+
+</body>
+</html>
